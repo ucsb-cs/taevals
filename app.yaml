@@ -1,0 +1,29 @@
+application: taevals
+version: 1
+runtime: python
+api_version: 1
+
+handlers:
+- url: /stats.*
+  script: $PYTHON_LIB/google/appengine/ext/appstats/ui.py
+
+- url: /stylesheets
+  static_dir: stylesheets
+
+- url: /admin
+  script: admin.py
+  login: admin
+  secure: always
+
+- url: /eval/[a-zA-Z]+
+  script: taevals.py
+  secure: always
+
+- url: /.*
+  script: taevals.py
+  secure: never
+
+admin_console:
+  pages:
+  - name: TA Evals Admin Page
+    url: /admin
