@@ -1,4 +1,4 @@
-import cgi, os, random
+import cgi, os, pickle, random
 from google.appengine.api import mail, users
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
@@ -19,6 +19,19 @@ at least one TA in each course you are enrolled in.
 Thank You,
 %s"""
 
+QUESTIONS = [
+    ('Please rate your TA\'s knowledge of the course subject matter.', 0),
+    ('Please rate your TA\'s preparation for discussion section.', 0),
+    ('How effective are your TA\'s English communication skills?', 0),
+    ('Please rate the quality of your TA\'s board work.', 0),
+    ('How effective is your TA in answering students\' questions?', 0),
+    ('Please rate the overall effectiveness of your TA.', 0),
+    ('How often do you attend the discussion section / lab?', 1),
+    (''.join(['Please describe at least one specific strength of your TA, ',
+              'discussion section or lab.']), 2),
+    (''.join(['Please suggest at least one specific improvement for your TA, ',
+              'discussion or lab.']), 2)]
+
 
 class EvalInvite(db.Model):
     email = db.StringProperty(required=True)
@@ -35,7 +48,47 @@ class EvalInvite(db.Model):
                                            course=course, tas=tas)
             cur = tmp.email, tmp.course
         return tmp
-    
+
+
+class Eval(db.Model):
+    ta = db.StringProperty(required=True)
+    course = db.StringProperty(required=True)
+    responses = db.BlobProperty(required=True)
+
+    def update_response_list(self, responses):
+        current = pickle.loads(self.responses)
+
+        for i, (_, q_type) in enumerate(QUESTIONS):
+            response = responses[i].strip()
+            if not response: continue
+
+            if q_type in [0, 1]:
+                current[i][int(response)] += 1
+            else:
+                current[i].append(response)
+        self.responses = pickle.dumps(current, pickle.HIGHEST_PROTOCOL)
+
+    @staticmethod
+    def create_or_update(ta, course, responses):
+        key_name = '%s-%s' % (ta, course)
+        obj = Eval.get_by_key_name(key_name)
+        if not obj:
+            response_list = Eval._construct_response_list()
+            obj = Eval(key_name=key_name, ta=ta, course=course,
+                       responses=response_list)
+        obj.update_response_list(responses)
+        obj.put()
+
+    @staticmethod
+    def _construct_response_list():
+        responses = []
+        for _, q_type in QUESTIONS:
+            if q_type in [0, 1]:
+                responses.append([0, 0, 0, 0, 0])
+            else:
+                responses.append([])
+        return pickle.dumps(responses, pickle.HIGHEST_PROTOCOL)
+
 
 class HomePage(webapp.RequestHandler):
     def get(self):
@@ -47,7 +100,8 @@ class EvalPage(webapp.RequestHandler):
     def get(self, key, success=None, error=None):
         ei = EvalInvite.get_by_key_name(key)
         if ei:
-            template_values = {'ei':ei, 'success':success, 'error':error}
+            template_values = {'ei':ei, 'success':success, 'error':error,
+                               'questions':QUESTIONS}
             path = os.path.join(VIEW_PATH, 'eval.html')
             self.response.out.write(template.render(path, template_values))
         else:
@@ -65,7 +119,19 @@ class EvalPage(webapp.RequestHandler):
             self.get(key, error='Invalid TA: %s' % self.request.get('ta'))
 
     def evaluate_ta(self, key, ei, ta):
-        # Anonymously Update TAs evaluation
+        responses = self.request.get_all('response')
+        if len(responses) != len(QUESTIONS):
+            return self.get(key, error='Invalid Form Submission')
+        
+        for i, resp in enumerate(responses):
+            if QUESTIONS[i][1] in [0, 1] and \
+                    resp in ['', '0', '1', '2', '3', '4']: pass
+            elif QUESTIONS[i][1] == 2: pass
+            else:
+                return self.get(key, error='Invalid value at question: %s' %
+                                QUESTIONS[i][0])
+
+        db.run_in_transaction(Eval.create_or_update, ta, ei.course, responses)
 
         # Remove TA from list of TAs student can evaluate
         ei.tas.remove(ta)
@@ -174,6 +240,7 @@ class AdminPage(webapp.RequestHandler):
             self.get(errors=['Invalid confirmation'])
         else:
             db.delete([x for x in EvalInvite.all(keys_only=True)])
+            db.delete([x for x in Eval.all(keys_only=True)])
             self.get(successes=['Reset Database'])
 
 

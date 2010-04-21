@@ -16,17 +16,48 @@
 {% if ei.tas %}
   <form action="" method="post">
     {% if ei.tas|length_is:1 %}
-      TA: {{ ei.tas.0 }}
+      <div>TA: {{ ei.tas.0 }}</div>
       <input type="hidden" name="ta" value="{{ ei.tas.0 }}" />
     {% else %}
-      <select name="ta">
-	<option selected value="">Select ...</option>
-	{% for ta in ei.tas %}
-          <option value="{{ ta }}">{{ ta }}</option>
-	{% endfor %}
-      </select>
+      <div>TA 
+	<select name="ta">
+	  <option selected="selected" value="">Select ...</option>
+	  {% for ta in ei.tas %}
+            <option value="{{ ta }}">{{ ta }}</option>
+	  {% endfor %}
+	</select>
+      </div>
     {% endif %}
-    <input type="submit" value="Evaluate TA" />
+
+    {% for question in questions %}
+      <div style="padding-top:10px">
+	<div>{{ question.0 }}</div>
+	{% ifequal question.1 0 %}
+	  <select name="response">
+	    <option selected="selected" value="">Select ...</option>
+	    <option value="0">1 -- Exceptional</option>
+	    <option value="1">2 -- Good</option>
+	    <option value="2">3 -- Average</option>
+	    <option value="3">4 -- Fair</option>
+	    <option value="4">5 -- Poor</option>
+	  </select>		  
+	{% else %}{% ifequal question.1 1 %}
+	  <select name="response">
+	    <option selected="selected" value="">Select ...</option>
+	    <option value="0">1 -- Always</option>
+	    <option value="1">2 -- Sometimes</option>
+	    <option value="2">3 -- Occasionally</option>
+	    <option value="3">4 -- Seldom</option>
+	    <option value="4">5 -- Never</option>
+	  </select>		  
+	{% else %}{% ifequal question.1 2 %}
+	  <textarea name="response" rows="5" cols="80"></textarea>
+	{% else %}
+	  Unsupported Question Type
+	{% endifequal %}{% endifequal %}{% endifequal %}
+      </div>
+    {% endfor %}
+    <div><input type="submit" value="Evaluate TA" /></div>
   </form>
 {% else %}
   <p>No more TAs to evaluate for this class. Thanks!</p>

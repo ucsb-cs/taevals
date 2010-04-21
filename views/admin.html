@@ -22,8 +22,10 @@
   <form action="/admin" method="post" enctype="multipart/form-data">
     <div>TAs CSV File: <input type="file" name="tas" /></div>
     <div>Students CSV File: <input type="file" name="students" /></div>
-    <input type="hidden" name="action" value="upload" />
-    <input type="submit" value="Upload" />
+    <div>
+      <input type="hidden" name="action" value="upload" />
+      <input type="submit" value="Upload" />
+    </div>
   </form>
 {% else %}
   <h2>Statistics</h2>
@@ -33,15 +35,19 @@
   {% endfor %}
   </ol>
   <form action="/admin" method="post">
-    From Name: <input type="text" name="name" />
     <input type="hidden" name="action" value="email" />
-    <input type="submit" value="Email Invites" />
-    (Emails are sent from your email address)
+    <div>
+      From Name: <input type="text" name="name" />
+      <input type="submit" value="Email Invites" />
+      (Emails are sent from your email address)
+    </div>
   </form>
   <form action="/admin" method="post">
-    Type 0xDEADBEEF to confirm: <input type="text" name="confirm" />
-    <input type="hidden" name="action" value="reset" />
-    <input type="submit" value="Reset Database" />
+    <div>
+      Type 0xDEADBEEF to confirm: <input type="text" name="confirm" />
+      <input type="hidden" name="action" value="reset" />
+      <input type="submit" value="Reset Database" />
+    </div>
   </form>
 {% endif %}
 {% endblock %}
