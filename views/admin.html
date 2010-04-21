@@ -3,7 +3,6 @@
 {% block title %}TA Evaluations Admin Panel{% endblock %}
 
 {% block content %}
-<h2>Upload CSV File</h2>
 {% for error in errors %}
   <div style="color:#F00">Error: {{ error }}</div>
 {% endfor %}
@@ -16,10 +15,24 @@
   <div style="color:#00F">{{ success }}</div>
 {% endfor %}
 
-
-<form action="/admin" method="post" enctype="multipart/form-data">
-  <div>TAs CSV File: <input type="file" name="tas" /></div>
-  <div>Students CSV File: <input type="file" name="students" /></div>
-  <input type="submit" value="Upload" />
-</form>
+{% if not courses %}
+  <h2>Upload CSV File</h2>
+  <form action="/admin" method="post" enctype="multipart/form-data">
+    <div>TAs CSV File: <input type="file" name="tas" /></div>
+    <div>Students CSV File: <input type="file" name="students" /></div>
+    <input type="hidden" name="action" value="upload" />
+    <input type="submit" value="Upload" />
+  </form>
+{% else %}
+  <h2>Statistics</h2>
+  <ol>
+  {% for course in courses.items %}
+    <li>{{ course.0 }}: {{ course.1 }} remaining evaluations</li>
+  {% endfor %}
+  </ol>
+  <form action="/admin" method="post">
+    <input type="hidden" name="action" value="clear" />
+    <input type="submit" value="Clear All" />
+  </form>
+{% endif %}
 {% endblock %}

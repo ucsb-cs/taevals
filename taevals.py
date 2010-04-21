@@ -1,4 +1,4 @@
-import os
+import os, random
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
 from google.appengine.ext.webapp.util import run_wsgi_app
@@ -7,13 +7,21 @@ from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError
 
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
 
-
-class EvaluationInvitation(db.Model):
-    secret_key = db.IntegerProperty(required=True)
+class EvalInvite(db.Model):
     email = db.StringProperty(required=True)
     course = db.StringProperty(required=True)
-    tas_to_eval = db.StringListProperty(required=True)
+    tas = db.StringListProperty(required=True)
     date = db.DateTimeProperty(auto_now_add=True)
+
+    @staticmethod
+    def create_new(student, course, tas):
+        cur = None, None
+        while cur != (student, course):
+            key_name = hex(random.randint(0, 0xFFFFFFFF))[2:]
+            tmp = EvalInvite.get_or_insert(key_name, email=student,
+                                           course=course, tas=tas)
+            cur = tmp.email, tmp.course
+        return tmp
     
 
 class HomePage(webapp.RequestHandler):
@@ -31,12 +39,30 @@ class EvalPage(webapp.RequestHandler):
 
 class AdminPage(webapp.RequestHandler):
     def get(self, successes=None, warnings=None, errors=None):
+        by_course = {}
+        for ei in EvalInvite.all():
+            if ei.course in by_course:
+                by_course[ei.course] += len(ei.tas)
+            else:
+                by_course[ei.course] = len(ei.tas)
         template_values = {'successes':successes, 'warnings':warnings,
-                           'errors':errors}
+                           'errors':errors, 'courses':by_course}
         path = os.path.join(VIEW_PATH, 'admin.html')
         self.response.out.write(template.render(path, template_values))
 
     def post(self):
+        action = self.request.get('action')
+        if not action:
+            self.get()
+        elif action == 'upload':
+            self.upload_csv()
+        elif action == 'clear':
+            db.delete(EvalInvite.all())
+            self.get(successes=['Cleared all invites'])
+        else:
+            self.get(errors=['Invalid action: %s' % action])
+
+    def upload_csv(self):
         tas = self.request.get('tas')
         students = self.request.get('students')
 
@@ -49,50 +75,50 @@ class AdminPage(webapp.RequestHandler):
         if tas == '':
             errors.add('No TA file submitted.')
         else:
-            for line in [x.strip() for x in tas.split('\n') if x != '']:
-                split = [x.strip() for x in line.split(',') if x != '']
-                if len(split) < 2:
-                    errors.add('Invalid TA file beginning at: %s' % line)
-                    break
-                course = split[0].lower()
-                tas = split[1:]
-                
-                if course in course_tas:
-                    errors.add('Duplicate course listing in TA file: %s' %
-                               course)
-                else:
-                    course_tas[course] = tas
-
+            course_tas, errors = self._process_csv(tas, errors, 'TA')
         if students == '':
             errors.add('No student file submitted.')
         else:
-            for line in [x.strip() for x in students.split('\n') if x != '']:
-                split = [x.strip() for x in line.split(',') if x != '']
-                if len(split) < 2:
-                    errors.add('Invalid student file beginning at: %s' % line)
-                    break
-                course = split[0].lower()
-                students = split[1:]
+            course_students, errors = self._process_csv(students, errors,
+                                                        'student')
 
-                if course not in course_tas:
-                    warnings.add('Skipping course with no TAs: %s' % course)
-                elif course in course_students:
-                    errors.add('Duplicate course listing in TA file: %s' %
-                               course)
-                    break
-                else:
-                    course_students[course] = students
+        s_tas = set(course_tas)
+        s_students = set(course_students)
+        courses = s_tas.intersection(s_students)
 
-        for course in set(course_tas) - set(course_students):
+        for course in s_tas - courses:
             warnings.add('Skipping course with no students: %s' % course)
+        for course in s_students - courses:
+            warnings.add('Skipping course with no tas: %s' % course)
+
+        db.delete(EvalInvite.all())
 
         if len(errors) == 0:
-            for course, students in course_students.items():
-                successes.append('Added: %s with %d students and %d tas' %
-                                 (course, len(students),
+            for course in courses:
+                for student in course_students[course]:
+                    EvalInvite.create_new(student, course, course_tas[course])
+                successes.append('Added %s: %d students %d tas' %
+                                 (course, len(course_students[course]),
                                   len(course_tas[course])))
-
         self.get(successes, warnings, errors)
+
+    @staticmethod
+    def _process_csv(body, errors, descriptor):
+        to_return = {}
+        for line in [x.strip() for x in body.split('\n') if x != '']:
+            split = [x.strip() for x in line.split(',') if x != '']
+            if len(split) < 2:
+                errors.add('Invalid TA file beginning at: %s' % line)
+                break
+            course = split[0].lower()
+            name = split[1:]
+                
+            if course in to_return:
+                errors.add('Duplicate course listing in %s file: %s' %
+                           (descriptor, course))
+            else:
+                to_return[course] = name
+        return to_return, errors
 
 
 class ErrorPage(webapp.RequestHandler):
