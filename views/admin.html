@@ -3,6 +3,8 @@
 {% block title %}TA Evaluations Admin Panel{% endblock %}
 
 {% block content %}
+<p>Hello {{ admin.email }}</p>
+
 {% for error in errors %}
   <div style="color:#F00">Error: {{ error }}</div>
 {% endfor %}
@@ -31,8 +33,15 @@
   {% endfor %}
   </ol>
   <form action="/admin" method="post">
-    <input type="hidden" name="action" value="clear" />
-    <input type="submit" value="Clear All" />
+    From Name: <input type="text" name="name" />
+    <input type="hidden" name="action" value="email" />
+    <input type="submit" value="Email Invites" />
+    (Emails are sent from your email address)
+  </form>
+  <form action="/admin" method="post">
+    Type 0xDEADBEEF to confirm: <input type="text" name="confirm" />
+    <input type="hidden" name="action" value="reset" />
+    <input type="submit" value="Reset Database" />
   </form>
 {% endif %}
 {% endblock %}

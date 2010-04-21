@@ -1,4 +1,5 @@
-import os, random
+import cgi, os, random
+from google.appengine.api import mail, users
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
 from google.appengine.ext.webapp.util import run_wsgi_app
@@ -6,6 +7,18 @@ from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError
 # catch CapabilityDisabledError on model puts for downtimes
 
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
+EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluations'
+EMAIL_TEMPLATE = """Student,
+
+You are receiving this email because you are currently enrolled in the
+following Computer Science Department courses. Please submit an evaluation for
+at least one TA in each course you are enrolled in.
+
+%s
+
+Thank You,
+%s"""
+
 
 class EvalInvite(db.Model):
     email = db.StringProperty(required=True)
@@ -31,22 +44,47 @@ class HomePage(webapp.RequestHandler):
 
 
 class EvalPage(webapp.RequestHandler):
-    def get(self, key):
-        template_values = {'class':'Blah', 'key':key}
-        path = os.path.join(VIEW_PATH, 'eval.html')
-        self.response.out.write(template.render(path, template_values))
+    def get(self, key, success=None, error=None):
+        ei = EvalInvite.get_by_key_name(key)
+        if ei:
+            template_values = {'ei':ei, 'success':success, 'error':error}
+            path = os.path.join(VIEW_PATH, 'eval.html')
+            self.response.out.write(template.render(path, template_values))
+        else:
+            self.redirect('/')
+
+    def post(self, key):
+        ei = EvalInvite.get_by_key_name(key)
+        if not ei:
+            self.redirect('/')
+        elif self.request.get('ta') == '':
+            self.get(key, error='Must select a TA to evaluate')
+        elif self.request.get('ta') in ei.tas:
+            self.evaluate_ta(key, ei, self.request.get('ta'))
+        else:
+            self.get(key, error='Invalid TA: %s' % self.request.get('ta'))
+
+    def evaluate_ta(self, key, ei, ta):
+        # Anonymously Update TAs evaluation
+
+        # Remove TA from list of TAs student can evaluate
+        ei.tas.remove(ta)
+        ei.put()
+
+        self.get(key, success='Evaluated: %s' % ta)
 
 
 class AdminPage(webapp.RequestHandler):
     def get(self, successes=None, warnings=None, errors=None):
-        by_course = {}
+        courses = {}
         for ei in EvalInvite.all():
-            if ei.course in by_course:
-                by_course[ei.course] += len(ei.tas)
+            if ei.course in courses:
+                courses[ei.course] += len(ei.tas)
             else:
-                by_course[ei.course] = len(ei.tas)
+                courses[ei.course] = len(ei.tas)
         template_values = {'successes':successes, 'warnings':warnings,
-                           'errors':errors, 'courses':by_course}
+                           'errors':errors, 'courses':courses,
+                           'admin':users.get_current_user()}
         path = os.path.join(VIEW_PATH, 'admin.html')
         self.response.out.write(template.render(path, template_values))
 
@@ -54,13 +92,44 @@ class AdminPage(webapp.RequestHandler):
         action = self.request.get('action')
         if not action:
             self.get()
+        elif action == 'email':
+            self.email_invites()
         elif action == 'upload':
             self.upload_csv()
-        elif action == 'clear':
-            db.delete(EvalInvite.all())
-            self.get(successes=['Cleared all invites'])
+        elif action == 'reset':
+            self.reset()
         else:
             self.get(errors=['Invalid action: %s' % action])
+
+    def email_invites(self):
+        if self.request.get('name') == '':
+            return self.get(errors=['From name cannot be blank'])
+        else:
+            nickname = self.request.get('name')
+        students = {}
+        for ei in EvalInvite.all():
+            if not ei.tas: continue
+
+            if ei.email in students:
+                students[ei.email][ei.course] = (ei.key().name(), ei.tas)
+            else:
+                students[ei.email] = {ei.course:(ei.key().name(), ei.tas)}
+
+        for email, courses in students.items():
+            output = ''
+            for course in sorted(courses):
+                key, tas = courses[course]
+                url = 'https://%s/eval/%s' % (os.environ['HTTP_HOST'], key)
+                output += '\n'.join(['-%s' % course,
+                                     '\tTAs: %s' % ', '.join(sorted(tas)),
+                                     '\tURL: %s' % url, ''])
+            user = users.get_current_user()
+            email_from = '%s <%s>' % (nickname,
+                                      user.email())
+            mail.send_mail(email_from, email, EMAIL_SUBJECT,
+                           EMAIL_TEMPLATE % (output, nickname))
+        self.get(['Sent %d emails from %s' % (len(students),
+                                              cgi.escape(email_from))])
 
     def upload_csv(self):
         tas = self.request.get('tas')
@@ -91,8 +160,6 @@ class AdminPage(webapp.RequestHandler):
         for course in s_students - courses:
             warnings.add('Skipping course with no tas: %s' % course)
 
-        db.delete(EvalInvite.all())
-
         if len(errors) == 0:
             for course in courses:
                 for student in course_students[course]:
@@ -101,6 +168,14 @@ class AdminPage(webapp.RequestHandler):
                                  (course, len(course_students[course]),
                                   len(course_tas[course])))
         self.get(successes, warnings, errors)
+
+    def reset(self):
+        if self.request.get('confirm') != '0xDEADBEEF':
+            self.get(errors=['Invalid confirmation'])
+        else:
+            db.delete([x for x in EvalInvite.all(keys_only=True)])
+            self.get(successes=['Reset Database'])
+
 
     @staticmethod
     def _process_csv(body, errors, descriptor):
@@ -127,7 +202,7 @@ class ErrorPage(webapp.RequestHandler):
 
 
 application = webapp.WSGIApplication([('/', HomePage),
-                                      (r'/eval/([a-zA-Z0-9]+)', EvalPage),
+                                      (r'/eval/([0-9a-f]+)', EvalPage),
                                       ('/admin', AdminPage),
                                       (r'/.*', ErrorPage)], debug=True)
 

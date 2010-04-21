@@ -1,8 +1,34 @@
 {% extends "layout.html" %}
 
-{% block title %}TA Evaluations &raquo; {{ class }}{% endblock %}
+{% block title %}Midterm TA Evaluations &raquo; {{ ei.course }}{% endblock %}
 
 {% block content %}
-<h1>TA Evaluatation</h1>
-<p>{{ key }}</p>
+{% if error %}
+  <div style="color:#F00">Error: {{ error }}</div>
+{% endif %}
+
+{% if success %}
+  <div style="color:#00F">{{ success }}</div>
+{% endif %}
+
+<h1>{{ ei.course }} Midterm TA Evaluatation</h1>
+
+{% if ei.tas %}
+  <form action="" method="post">
+    {% if ei.tas|length_is:1 %}
+      TA: {{ ei.tas.0 }}
+      <input type="hidden" name="ta" value="{{ ei.tas.0 }}" />
+    {% else %}
+      <select name="ta">
+	<option selected value="">Select ...</option>
+	{% for ta in ei.tas %}
+          <option value="{{ ta }}">{{ ta }}</option>
+	{% endfor %}
+      </select>
+    {% endif %}
+    <input type="submit" value="Evaluate TA" />
+  </form>
+{% else %}
+  <p>No more TAs to evaluate for this class. Thanks!</p>
+{% endif %}
 {% endblock %}
