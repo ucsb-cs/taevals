@@ -10,12 +10,12 @@ handlers:
 - url: /stylesheets
   static_dir: stylesheets
 
-- url: /admin
-  script: admin.py
+- url: /admin.*
+  script: taevals.py
   login: admin
   secure: always
 
-- url: /eval/[a-zA-Z]+
+- url: /eval/[a-zA-Z0-9]+
   script: taevals.py
   secure: always
 

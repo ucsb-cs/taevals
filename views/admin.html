@@ -1,0 +1,25 @@
+{% extends "layout.html" %}
+
+{% block title %}TA Evaluations Admin Panel{% endblock %}
+
+{% block content %}
+<h2>Upload CSV File</h2>
+{% for error in errors %}
+  <div style="color:#F00">Error: {{ error }}</div>
+{% endfor %}
+
+{% for warning in warnings %}
+  <div style="color:#FC0">Warning: {{ warning }}</div>
+{% endfor %}
+
+{% for success in successes %}
+  <div style="color:#00F">{{ success }}</div>
+{% endfor %}
+
+
+<form action="/admin" method="post" enctype="multipart/form-data">
+  <div>TAs CSV File: <input type="file" name="tas" /></div>
+  <div>Students CSV File: <input type="file" name="students" /></div>
+  <input type="submit" value="Upload" />
+</form>
+{% endblock %}
