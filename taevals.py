@@ -84,7 +84,7 @@ class Eval(db.Model):
         responses = []
         for _, q_type in QUESTIONS:
             if q_type in [0, 1]:
-                responses.append([0, 0, 0, 0, 0])
+                responses.append([0, 0, 0, 0, 0, 0])
             else:
                 responses.append([])
         return pickle.dumps(responses, pickle.HIGHEST_PROTOCOL)
@@ -97,11 +97,15 @@ class HomePage(webapp.RequestHandler):
 
 
 class EvalPage(webapp.RequestHandler):
-    def get(self, key, success=None, error=None):
+    def get(self, key, ta='', responses=None, success=None, errors=None):
         ei = EvalInvite.get_by_key_name(key)
         if ei:
-            template_values = {'ei':ei, 'success':success, 'error':error,
-                               'questions':QUESTIONS}
+            if not responses:
+                responses = [''] * len(QUESTIONS)
+            questions = zip(QUESTIONS, responses)
+
+            template_values = {'ei':ei, 'success':success, 'errors':errors,
+                               'sel_ta':ta, 'questions':questions}
             path = os.path.join(VIEW_PATH, 'eval.html')
             self.response.out.write(template.render(path, template_values))
         else:
@@ -109,27 +113,28 @@ class EvalPage(webapp.RequestHandler):
 
     def post(self, key):
         ei = EvalInvite.get_by_key_name(key)
-        if not ei:
-            self.redirect('/')
-        elif self.request.get('ta') == '':
-            self.get(key, error='Must select a TA to evaluate')
-        elif self.request.get('ta') in ei.tas:
-            self.evaluate_ta(key, ei, self.request.get('ta'))
-        else:
-            self.get(key, error='Invalid TA: %s' % self.request.get('ta'))
+        if not ei: return self.redirect('/')
 
-    def evaluate_ta(self, key, ei, ta):
+        errors = []
+
+        ta = self.request.get('ta')
+        if ta not in ei.tas:
+            errors.append('Must select a TA to evaluate')
+            ta = ''
+
         responses = self.request.get_all('response')
-        if len(responses) != len(QUESTIONS):
-            return self.get(key, error='Invalid Form Submission')
-        
-        for i, resp in enumerate(responses):
-            if QUESTIONS[i][1] in [0, 1] and \
-                    resp in ['', '0', '1', '2', '3', '4']: pass
-            elif QUESTIONS[i][1] == 2: pass
-            else:
-                return self.get(key, error='Invalid value at question: %s' %
-                                QUESTIONS[i][0])
+
+        for i in range(len(QUESTIONS)):
+            if i > len(responses):
+                responses[i] = ''
+                continue
+            if QUESTIONS[i][1] in [0, 1]:
+                if responses[i] not in ['0', '1', '2', '3', '4', '5']:
+                    responses[i] = ''
+                    errors.append('Must provide an answer for "%s"' %
+                                  QUESTIONS[i][0])
+        if errors:
+            return self.get(key, ta, responses, errors=errors)
 
         db.run_in_transaction(Eval.create_or_update, ta, ei.course, responses)
 

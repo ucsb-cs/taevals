@@ -3,9 +3,9 @@
 {% block title %}Midterm TA Evaluations &raquo; {{ ei.course }}{% endblock %}
 
 {% block content %}
-{% if error %}
+{% for error in errors %}
   <div style="color:#F00">Error: {{ error }}</div>
-{% endif %}
+{% endfor %}
 
 {% if success %}
   <div style="color:#00F">{{ success }}</div>
@@ -21,37 +21,72 @@
     {% else %}
       <div>TA 
 	<select name="ta">
-	  <option selected="selected" value="">Select ...</option>
+	  <option
+	     {% ifequal sel_ta '' %}selected="selected" {% endifequal %}
+	     value="">Select ...</option>
 	  {% for ta in ei.tas %}
-            <option value="{{ ta }}">{{ ta }}</option>
+            <option
+	       {% ifequal sel_ta ta %}selected="selected" {% endifequal %}
+	       value="{{ ta }}">{{ ta }}</option>
 	  {% endfor %}
 	</select>
+
       </div>
     {% endif %}
 
     {% for question in questions %}
       <div style="padding-top:10px">
-	<div>{{ question.0 }}</div>
-	{% ifequal question.1 0 %}
+	<div>{{ question.0.0 }}</div>
+	{% ifequal question.0.1 0 %}
 	  <select name="response">
-	    <option selected="selected" value="">Select ...</option>
-	    <option value="0">1 -- Exceptional</option>
-	    <option value="1">2 -- Good</option>
-	    <option value="2">3 -- Average</option>
-	    <option value="3">4 -- Fair</option>
-	    <option value="4">5 -- Poor</option>
+	    <option
+	       {% ifequal question.1 '' %}selected="selected" {% endifequal %}
+	       value="">Select ...</option>
+	    <option
+	       {% ifequal question.1 '1' %}selected="selected" {% endifequal %}
+	       value="1">1 -- Exceptional</option>
+	    <option
+	       {% ifequal question.1 '2' %}selected="selected" {% endifequal %}
+	       value="2">2 -- Good</option>
+	    <option
+	       {% ifequal question.1 '3' %}selected="selected" {% endifequal %}
+	       value="3">3 -- Average</option>
+	    <option
+	       {% ifequal question.1 '4' %}selected="selected" {% endifequal %}
+	       value="4">4 -- Fair</option>
+	    <option
+	       {% ifequal question.1 '5' %}selected="selected" {% endifequal %}
+	       value="5">5 -- Poor</option>
+	    <option
+	       {% ifequal question.1 '0' %}selected="selected" {% endifequal %}
+	       value="0">Decline to Respond</option>
 	  </select>		  
-	{% else %}{% ifequal question.1 1 %}
+	{% else %}{% ifequal question.0.1 1 %}
 	  <select name="response">
-	    <option selected="selected" value="">Select ...</option>
-	    <option value="0">1 -- Always</option>
-	    <option value="1">2 -- Sometimes</option>
-	    <option value="2">3 -- Occasionally</option>
-	    <option value="3">4 -- Seldom</option>
-	    <option value="4">5 -- Never</option>
+	    <option
+	       {% ifequal question.1 '' %}selected="selected" {% endifequal %}
+	       selected="selected" value="">Select ...</option>
+	    <option
+	       {% ifequal question.1 '1' %}selected="selected" {% endifequal %}
+	       value="1">1 -- Always</option>
+	    <option
+	       {% ifequal question.1 '2' %}selected="selected" {% endifequal %}
+	       value="2">2 -- Sometimes</option>
+	    <option
+	       {% ifequal question.1 '3' %}selected="selected" {% endifequal %}
+	       value="3">3 -- Occasionally</option>
+	    <option
+	       {% ifequal question.1 '4' %}selected="selected" {% endifequal %}
+	       value="4">4 -- Seldom</option>
+	    <option
+	       {% ifequal question.1 '5' %}selected="selected" {% endifequal %}
+	       value="5">5 -- Never</option>
+	    <option
+	       {% ifequal question.1 '0' %}selected="selected" {% endifequal %}
+	       value="0">Decline to Respond</option>
 	  </select>		  
-	{% else %}{% ifequal question.1 2 %}
-	  <textarea name="response" rows="5" cols="80"></textarea>
+	{% else %}{% ifequal question.0.1 2 %}
+	  <textarea name="response" rows="5" cols="80">{{ question.1 }}</textarea>
 	{% else %}
 	  Unsupported Question Type
 	{% endifequal %}{% endifequal %}{% endifequal %}
