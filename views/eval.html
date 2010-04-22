@@ -13,7 +13,9 @@
 
 <h1>{{ ei.course }} Midterm TA Evaluatation</h1>
 
-{% if ei.tas %}
+{% if ei.expired %}
+  <p>The evaluation period has expired.</p>
+{% else %}{% if ei.tas %}
   <form action="" method="post">
     {% if ei.tas|length_is:1 %}
       <div>TA: {{ ei.tas.0 }}</div>
@@ -96,5 +98,5 @@
   </form>
 {% else %}
   <p>No more TAs to evaluate for this class. Thanks!</p>
-{% endif %}
+{% endif %}{% endif %}
 {% endblock %}

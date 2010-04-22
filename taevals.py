@@ -11,6 +11,8 @@ from google.appengine.ext.webapp.util import run_wsgi_app
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
 CD_ATTACHMENT = 'attachement; filename="%s"'
 
+EVAL_TIME = 3 # in hours
+
 COURSE_RE = re.compile('^[a-zA-Z0-9]+$')
 TA_NAME_RE = re.compile('^[a-zA-Z ]+$')
 STUDENT_EMAIL_RE = re.compile('^.*@.*$')
@@ -168,6 +170,9 @@ class EvalPage(webapp.RequestHandler):
     def get(self, key, ta='', responses=None, success=None, errors=None):
         ei = EvalInvite.get_by_key_name(key)
         if ei:
+            expire_time = ei.date + datetime.timedelta(hours=EVAL_TIME)
+            ei.expired = datetime.datetime.now() > expire_time
+
             if not responses:
                 responses = [''] * len(QUESTIONS)
             questions = zip(QUESTIONS, responses)
@@ -182,6 +187,9 @@ class EvalPage(webapp.RequestHandler):
     def post(self, key):
         ei = EvalInvite.get_by_key_name(key)
         if not ei: return self.redirect('/')
+        expire_time = ei.date + datetime.timedelta(hours=EVAL_TIME)
+        if datetime.datetime.now() > expire_time:
+            return self.get(key)
 
         errors = []
 
