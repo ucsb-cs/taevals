@@ -29,11 +29,20 @@
   </form>
 {% else %}
   <h2>Statistics</h2>
+  <div><a href="/admin/all">All</a></div>
   <ol>
   {% for course in courses.items %}
-    <li>{{ course.0 }}: {{ course.1 }} remaining evaluations</li>
+    <li><a href="/admin/{{ course.0 }}">{{ course.0 }}</a>
+      <ol>
+	{% for ta in course.1.items %}
+	  <li><a href="/admin/{{ course.0 }}/{{ ta.0 }}">{{ ta.0 }}</a>:
+	    {{ ta.1.completed }} completed, {{ ta.1.remaining }} remaining</li>
+	{% endfor %}
+      </ol>
+    </li>
   {% endfor %}
   </ol>
+  <hr/>
   <form action="/admin" method="post">
     <input type="hidden" name="action" value="email" />
     <div>

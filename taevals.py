@@ -1,10 +1,12 @@
-import cgi, os, pickle, random
+import cgi, os, pickle, random, urllib
 from google.appengine.api import mail, users
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
 from google.appengine.ext.webapp.util import run_wsgi_app
-from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError
+
+#from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError
 # catch CapabilityDisabledError on model puts for downtimes
+# Test resource http://pastebin.com/bbidrU7g
 
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
 EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluations'
@@ -31,6 +33,7 @@ QUESTIONS = [
               'discussion section or lab.']), 2),
     (''.join(['Please suggest at least one specific improvement for your TA, ',
               'discussion or lab.']), 2)]
+Q_H = '       weight:  (1)  (2)  (3)  (4)  (5) | Blank  Total  Mean  Median\n'
 
 
 class EvalInvite(db.Model):
@@ -55,6 +58,9 @@ class Eval(db.Model):
     course = db.StringProperty(required=True)
     responses = db.BlobProperty(required=True)
 
+    def get_responses(self):
+        return pickle.loads(self.responses)
+
     def update_response_list(self, responses):
         current = pickle.loads(self.responses)
 
@@ -78,6 +84,44 @@ class Eval(db.Model):
                        responses=response_list)
         obj.update_response_list(responses)
         obj.put()
+
+    @staticmethod
+    def formatted_question_stats(values):
+        # TODO: Compute Mean and Median
+        total = sum(values)
+        responded = total - values[0]
+        s = ' ' * 15
+        for i, count in enumerate(values[1:]):
+            if count:
+                s += '%3.0f%% ' % (count * 100. / responded)
+            else:
+                s += ' ' * 5
+        s += '| %4d   %4d\n\n' % (values[0], total)
+        return s
+
+    @staticmethod
+    def generate_summary(evals):
+        responses = evals[0].get_responses()
+        for eval in evals[1:]:
+            tmp = eval.get_responses()
+            for q_num, (_, q_type) in enumerate(QUESTIONS):
+                if q_type in [0, 1]:
+                    for r_num in range(len(tmp[q_num])):
+                        responses[q_num][r_num] += tmp[q_num][r_num]
+                else:
+                    responses[q_num].extend(tmp[q_num])
+                    
+        s = ''
+        for q_num, (question, q_type) in enumerate(QUESTIONS):
+            s += '    %2d. %s\n' % (q_num+1, question)
+            if q_type in [0, 1]:
+                s += Q_H
+                s += Eval.formatted_question_stats(responses[q_num])
+            else:
+                for i, res in enumerate(sorted(responses[q_num])):
+                    s += '%7s %3d. %s\n' % ('', i+1, res)
+                s += '\n'
+        return s
 
     @staticmethod
     def _construct_response_list():
@@ -145,14 +189,51 @@ class EvalPage(webapp.RequestHandler):
         self.get(key, success='Evaluated: %s' % ta)
 
 
+class AdminStatPage(webapp.RequestHandler):
+    def get(self, course=None, ta=None):
+        evals = []
+        if ta != None:
+            ta = urllib.unquote(ta)
+            course = urllib.unquote(course)
+            if course == None: return self.redirect('/admin')
+            key_name = '%s-%s' % (ta, course)
+            obj = Eval.get_by_key_name(key_name)
+            if obj == None:
+                return self.redirect('/admin')
+            evals.append(obj)
+        elif course != None:
+            course = urllib.unquote(course)
+            evals.extend([x for x in Eval.all().filter('course =', course)])
+        else:
+            evals.extend([x for x in Eval.all()])
+        
+        print Eval.generate_summary(evals)
+
+
 class AdminPage(webapp.RequestHandler):
     def get(self, successes=None, warnings=None, errors=None):
         courses = {}
+
+        # Remaining Evaluations
         for ei in EvalInvite.all():
-            if ei.course in courses:
-                courses[ei.course] += len(ei.tas)
+            if ei.course not in courses:
+                courses[ei.course] = {}
+
+            for ta in ei.tas:
+                if ta in courses[ei.course]:
+                    courses[ei.course][ta].remaining += 1
+                else:
+                    courses[ei.course][ta] = Dummy(remaining=1, completed=0)
+
+        # Completed Evaluations
+        for e in Eval.all():
+            completed = sum(e.get_responses()[0])
+            if e.ta in courses[e.course]:
+                courses[e.course][e.ta].completed = completed
             else:
-                courses[ei.course] = len(ei.tas)
+                courses[e.course][e.ta] = Dummy(completed=completed,
+                                                remaining=0)
+
         template_values = {'successes':successes, 'warnings':warnings,
                            'errors':errors, 'courses':courses,
                            'admin':users.get_current_user()}
@@ -248,7 +329,6 @@ class AdminPage(webapp.RequestHandler):
             db.delete([x for x in Eval.all(keys_only=True)])
             self.get(successes=['Reset Database'])
 
-
     @staticmethod
     def _process_csv(body, errors, descriptor):
         to_return = {}
@@ -273,9 +353,19 @@ class ErrorPage(webapp.RequestHandler):
         self.redirect('/', permanent=True)
 
 
+class Dummy(object):
+    def __init__(self, *args, **kwargs):
+        for k, v in kwargs.items():
+            self.__dict__[k] = v
+
+
 application = webapp.WSGIApplication([('/', HomePage),
                                       (r'/eval/([0-9a-f]+)', EvalPage),
                                       ('/admin', AdminPage),
+                                      (r'/admin/all', AdminStatPage),
+                                      (r'/admin/([^/]+)', AdminStatPage),
+                                      (r'/admin/([^/]+)/([^/]+)',
+                                       AdminStatPage),
                                       (r'/.*', ErrorPage)], debug=True)
 
 def main():
