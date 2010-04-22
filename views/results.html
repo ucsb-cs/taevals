@@ -3,10 +3,11 @@
 {% block title %}{{ title }} Results{% endblock %}
 
 {% block content %}
+<p><a href="/admin">Back to Admin</a> |
+  <a href="{{ dl_url }}">Download result</a></p>
+
 <h3>{{ title }} Results</h3>
 <pre>
 {{ results }}
 </pre>
-
-<p><a href="{{ dl_url }}">Download result</a></p>
 {% endblock %}

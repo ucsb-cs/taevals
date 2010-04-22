@@ -1,4 +1,4 @@
-import cgi, os, pickle, random, urllib
+import cgi, os, pickle, random, tarfile, time, urllib, StringIO
 from google.appengine.api import mail, users
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
@@ -9,6 +9,7 @@ from google.appengine.ext.webapp.util import run_wsgi_app
 # Test resource http://pastebin.com/bbidrU7g
 
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
+CD_ATTACHMENT = 'attachement; filename="%s"'
 EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluations'
 EMAIL_TEMPLATE = """Student,
 
@@ -100,13 +101,16 @@ class Eval(db.Model):
             else:
                 s += ' ' * 5
 
-        mean = sum(tmp) * 1. / responded
-        if len(tmp) % 2 == 0:
-            median = (tmp[len(tmp) / 2] + tmp[len(tmp) / 2 - 1]) / 2.
+        if responded:
+            mean = '%.1f' % (sum(tmp) * 1. / responded)
+            if len(tmp) % 2 == 0:
+                median = '%.1f' % ((tmp[len(tmp) / 2] +
+                                    tmp[len(tmp) / 2 - 1]) / 2.)
+            else:
+                median = '%.1f' % tmp[len(tmp) / 2]
         else:
-            median = tmp[len(tmp) / 2]
-        s += '| %4d   %4d   %4.1f   %4.1f\n\n' % (values[0], total, mean,
-                                                 median)
+            mean = median = '-'
+        s += '| %4d   %4d   %4s   %4s\n\n' % (values[0], total, mean, median)
         return s
 
     @staticmethod
@@ -120,7 +124,6 @@ class Eval(db.Model):
                         responses[q_num][r_num] += tmp[q_num][r_num]
                 else:
                     responses[q_num].extend(tmp[q_num])
-                    
         s = ''
         for q_num, (question, q_type) in enumerate(QUESTIONS):
             s += '    %2d. %s\n' % (q_num+1, question)
@@ -217,7 +220,7 @@ class AdminStatPage(webapp.RequestHandler):
             if obj == None:
                 return self.redirect('/admin')
             evals.append(obj)
-            title = ta
+            title = '%s-%s' % (course, ta)
         elif course != None:
             course = urllib.unquote(course)
             evals.extend([x for x in Eval.all().filter('course =', course)])
@@ -232,9 +235,9 @@ class AdminStatPage(webapp.RequestHandler):
         results = Eval.generate_summary(evals)
 
         if self.request.get('dl') == '1':
+            cd = CD_ATTACHMENT % '%s.txt' % title.replace(' ', '_')
             self.response.headers['Content-Type'] = 'text/plain'
-            content_disposition = 'attachement; filename="%s.txt"' % title
-            self.response.headers['Content-Disposition'] = content_disposition
+            self.response.headers['Content-Disposition'] = cd
             self.response.out.write(results)
         else:
             path = os.path.join(VIEW_PATH, 'results.html')
@@ -242,6 +245,27 @@ class AdminStatPage(webapp.RequestHandler):
             template_values = {'results':results, 'title':title,
                                'dl_url':dl_url}
             self.response.out.write(template.render(path, template_values))
+
+
+class ResultDownload(webapp.RequestHandler):
+    def get(self):
+        outfile = StringIO.StringIO()
+        tgz = tarfile.open(fileobj=outfile, mode='w:gz')
+        
+        for ev in Eval.all():
+            filename = 'taevals/%s-%s.txt' % (ev.course,
+                                              ev.ta.replace(' ', '_'))
+            results = Eval.generate_summary([ev])
+            tarinfo = tarfile.TarInfo(filename)
+            tarinfo.size = len(results)
+            tarinfo.mtime = time.time()
+            tgz.addfile(tarinfo, StringIO.StringIO(results))
+        tgz.close()
+
+        cd = CD_ATTACHMENT % 'taevals.tar.gz'
+        self.response.headers['Content-Type'] = 'application/x-compressed'
+        self.response.headers['Content-Disposition'] = cd
+        self.response.out.write(outfile.getvalue())
 
 
 class AdminPage(webapp.RequestHandler):
@@ -396,9 +420,10 @@ class Dummy(object):
 application = webapp.WSGIApplication([('/', HomePage),
                                       (r'/eval/([0-9a-f]+)', EvalPage),
                                       ('/admin', AdminPage),
+                                      ('/admin/dl', ResultDownload),
                                       (r'/admin/all', AdminStatPage),
-                                      (r'/admin/([^/]+)', AdminStatPage),
-                                      (r'/admin/([^/]+)/([^/]+)',
+                                      (r'/admin/s/([^/]+)', AdminStatPage),
+                                      (r'/admin/s/([^/]+)/([^/]+)',
                                        AdminStatPage),
                                       (r'/.*', ErrorPage)], debug=True)
 

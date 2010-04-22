@@ -32,10 +32,10 @@
   <div><a href="/admin/all">All</a></div>
   <ol>
   {% for course in courses.items %}
-    <li><a href="/admin/{{ course.0 }}">{{ course.0 }}</a>
+    <li><a href="/admin/s/{{ course.0 }}">{{ course.0 }}</a>
       <ol>
 	{% for ta in course.1.items %}
-	  <li><a href="/admin/{{ course.0 }}/{{ ta.0 }}">{{ ta.0 }}</a>:
+	  <li><a href="/admin/s/{{ course.0 }}/{{ ta.0 }}">{{ ta.0 }}</a>:
 	    {{ ta.1.completed }} completed, {{ ta.1.remaining }} remaining</li>
 	{% endfor %}
       </ol>
@@ -58,5 +58,6 @@
       <input type="submit" value="Reset Database" />
     </div>
   </form>
+  <p><a href="/admin/dl">Download all results</a></p>
 {% endif %}
 {% endblock %}
