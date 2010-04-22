@@ -3,8 +3,8 @@ from google.appengine.api import mail, users
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
 from google.appengine.ext.webapp.util import run_wsgi_app
+from google.appengine.runtime import apiproxy_errors
 
-#from google.appengine.runtime.apiproxy_errors import CapabilityDisabledError
 # catch CapabilityDisabledError on model puts for downtimes
 # Test resource http://pastebin.com/bbidrU7g
 
@@ -48,6 +48,7 @@ Q_H = '        weight:  (1)  (2)  (3)  (4)  (5) | Blank  Total  Mean  Median\n'
 
 class EvalInvite(db.Model):
     email = db.StringProperty(required=True)
+    email_sent = db.BooleanProperty(default=False)
     course = db.StringProperty(required=True)
     tas = db.StringListProperty(required=True)
     date = db.DateTimeProperty(auto_now_add=True)
@@ -347,11 +348,18 @@ class AdminPage(webapp.RequestHandler):
         students = {}
         for ei in EvalInvite.all():
             if not ei.tas: continue
+            elif ei.email_sent: continue
 
             if ei.email in students:
                 students[ei.email][ei.course] = (ei.key().name(), ei.tas)
             else:
                 students[ei.email] = {ei.course:(ei.key().name(), ei.tas)}
+
+        user = users.get_current_user()
+        email_from = '%s <%s>' % (nickname, user.email())
+
+        errors = []
+        sent = 0
 
         for email, courses in students.items():
             output = ''
@@ -361,13 +369,26 @@ class AdminPage(webapp.RequestHandler):
                 output += '\n'.join(['-%s' % course,
                                      '\tTAs: %s' % ', '.join(sorted(tas)),
                                      '\tURL: %s' % url, ''])
-            user = users.get_current_user()
-            email_from = '%s <%s>' % (nickname,
-                                      user.email())
-            mail.send_mail(email_from, email, EMAIL_SUBJECT,
-                           EMAIL_TEMPLATE % (output, nickname))
-        self.get(['Sent %d emails from %s' % (len(students),
-                                              cgi.escape(email_from))])
+            try:
+                mail.send_mail(email_from, email, EMAIL_SUBJECT,
+                               EMAIL_TEMPLATE % (output, nickname))
+
+                # Update invite email_sent field
+                for course in courses:
+                    key, _ = courses[course]
+                    ei = EvalInvite.get_by_key_name(key)
+                    ei.email_sent = True
+                    ei.put()
+
+                sent += 1
+            except apiproxy_errors.OverQuotaError, message:
+                errors.append(message)
+                break
+                
+        
+        self.get(['Sent %d emails from %s. Remaining: %d' %
+                  (sent, cgi.escape(email_from), len(students) - sent)],
+                 errors=errors)
 
     def upload_csv(self):
         tas = self.request.get('tas')
