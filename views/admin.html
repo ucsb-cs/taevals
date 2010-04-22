@@ -24,6 +24,7 @@
     <div>Students CSV File: <input type="file" name="students" /></div>
     <div>
       <input type="hidden" name="action" value="upload" />
+      <input type="hidden" name="token" value="{{ form_token }}" />
       <input type="submit" value="Upload" />
     </div>
   </form>
@@ -45,6 +46,7 @@
   <hr/>
   <form action="/admin" method="post">
     <input type="hidden" name="action" value="email" />
+    <input type="hidden" name="token" value="{{ form_token }}" />
     <div>
       From Name: <input type="text" name="name" />
       <input type="submit" value="Email Invites" />
@@ -55,6 +57,7 @@
     <div>
       Type 0xDEADBEEF to confirm: <input type="text" name="confirm" />
       <input type="hidden" name="action" value="reset" />
+    <input type="hidden" name="token" value="{{ form_token }}" />
       <input type="submit" value="Reset Database" />
     </div>
   </form>

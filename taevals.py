@@ -1,4 +1,4 @@
-import cgi, os, pickle, random, tarfile, time, urllib, StringIO
+import cgi, datetime, os, pickle, random, re, tarfile, time, urllib, StringIO
 from google.appengine.api import mail, users
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
@@ -10,6 +10,11 @@ from google.appengine.ext.webapp.util import run_wsgi_app
 
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
 CD_ATTACHMENT = 'attachement; filename="%s"'
+
+COURSE_RE = re.compile('^[a-zA-Z0-9]+$')
+TA_NAME_RE = re.compile('^[a-zA-Z ]+$')
+STUDENT_EMAIL_RE = re.compile('^.*@.*$')
+
 EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluations'
 EMAIL_TEMPLATE = """Student,
 
@@ -242,7 +247,7 @@ class AdminStatPage(webapp.RequestHandler):
         else:
             path = os.path.join(VIEW_PATH, 'results.html')
             dl_url = '%s?dl=1' % self.request.url
-            template_values = {'results':results, 'title':title,
+            template_values = {'results':cgi.escape(results), 'title':title,
                                'dl_url':dl_url}
             self.response.out.write(template.render(path, template_values))
 
@@ -292,17 +297,28 @@ class AdminPage(webapp.RequestHandler):
                 courses[e.course][e.ta] = Dummy(completed=completed,
                                                 remaining=0)
 
+        form_token = hex(random.randint(0, 0xFFFFFFFF))[2:]
+        expires = datetime.datetime.now() + datetime.timedelta(minutes=5)
+        expires_rfc822 = expires.strftime('%a %d %b %Y %H:%M:%S GMT')
+        cookie = "token=%s;expires=%s;path=/" % (form_token, expires_rfc822)
+
         template_values = {'successes':successes, 'warnings':warnings,
                            'errors':errors, 'courses':courses,
-                           'admin':users.get_current_user()}
+                           'admin':users.get_current_user(),
+                           'form_token':form_token}
         path = os.path.join(VIEW_PATH, 'admin.html')
+        self.response.headers.add_header("Set-Cookie", cookie)
         self.response.out.write(template.render(path, template_values))
 
     def post(self):
         action = self.request.get('action')
         if not action:
-            self.get()
-        elif action == 'email':
+            return self.get()
+
+        if not self.form_token_match():
+            return self.get(errors=['Invalid form token.'])
+
+        if action == 'email':
             self.email_invites()
         elif action == 'upload':
             self.upload_csv()
@@ -310,6 +326,10 @@ class AdminPage(webapp.RequestHandler):
             self.reset()
         else:
             self.get(errors=['Invalid action: %s' % action])
+
+    def form_token_match(self):
+        return 'token' in self.request.cookies and \
+            self.request.cookies['token'] == self.request.get('token')
 
     def email_invites(self):
         if self.request.get('name') == '':
@@ -354,12 +374,15 @@ class AdminPage(webapp.RequestHandler):
         if tas == '':
             errors.add('No TA file submitted.')
         else:
-            course_tas, errors = self._process_csv(tas, errors, 'TA')
+            course_tas, errors = self._process_csv(tas, errors, 'TA',
+                                                   TA_NAME_RE)
+
         if students == '':
             errors.add('No student file submitted.')
         else:
             course_students, errors = self._process_csv(students, errors,
-                                                        'student')
+                                                        'student',
+                                                        STUDENT_EMAIL_RE)
 
         s_tas = set(course_tas)
         s_students = set(course_students)
@@ -388,21 +411,31 @@ class AdminPage(webapp.RequestHandler):
             self.get(successes=['Reset Database'])
 
     @staticmethod
-    def _process_csv(body, errors, descriptor):
+    def _process_csv(body, errors, descriptor, validator=None):
         to_return = {}
         for line in [x.strip() for x in body.split('\n') if x != '']:
             split = [x.strip() for x in line.split(',') if x != '']
             if len(split) < 2:
                 errors.add('Invalid TA file beginning at: %s' % line)
                 break
-            course = split[0].lower()
-            name = split[1:]
-                
+            course = split[0]
+            names = split[1:]
+            
+            if not COURSE_RE.match(course):
+                errors.add('Invalid course name in %s file: %s' %
+                           (descriptor, course))
+                continue
+
+            if validator:
+                for name in names:
+                    if not validator.match(name):
+                        errors.add('Invalid %s %s' % (descriptor, name))
+
             if course in to_return:
                 errors.add('Duplicate course listing in %s file: %s' %
                            (descriptor, course))
             else:
-                to_return[course] = name
+                to_return[course] = names
         return to_return, errors
 
 
