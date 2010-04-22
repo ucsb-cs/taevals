@@ -33,7 +33,9 @@ QUESTIONS = [
               'discussion section or lab.']), 2),
     (''.join(['Please suggest at least one specific improvement for your TA, ',
               'discussion or lab.']), 2)]
-Q_H = '       weight:  (1)  (2)  (3)  (4)  (5) | Blank  Total  Mean  Median\n'
+Q_KEY = ['(1) Exceptional  (2) Good  (3) Average  (4) Fair  (5) Poor',
+         '(1) Always  (2) Sometimes  (3) Occasionally  (4) Seldom  (5) Never']
+Q_H = '        weight:  (1)  (2)  (3)  (4)  (5) | Blank  Total  Mean  Median\n'
 
 
 class EvalInvite(db.Model):
@@ -87,16 +89,24 @@ class Eval(db.Model):
 
     @staticmethod
     def formatted_question_stats(values):
-        # TODO: Compute Mean and Median
         total = sum(values)
+        tmp = []
         responded = total - values[0]
-        s = ' ' * 15
+        s = ' ' * 16
         for i, count in enumerate(values[1:]):
             if count:
                 s += '%3.0f%% ' % (count * 100. / responded)
+                tmp.extend([i+1 for _ in range(count)])
             else:
                 s += ' ' * 5
-        s += '| %4d   %4d\n\n' % (values[0], total)
+
+        mean = sum(tmp) * 1. / responded
+        if len(tmp) % 2 == 0:
+            median = (tmp[len(tmp) / 2] + tmp[len(tmp) / 2 - 1]) / 2.
+        else:
+            median = tmp[len(tmp) / 2]
+        s += '| %4d   %4d   %4.1f   %4.1f\n\n' % (values[0], total, mean,
+                                                 median)
         return s
 
     @staticmethod
@@ -115,11 +125,17 @@ class Eval(db.Model):
         for q_num, (question, q_type) in enumerate(QUESTIONS):
             s += '    %2d. %s\n' % (q_num+1, question)
             if q_type in [0, 1]:
+                s += '        %s\n' % Q_KEY[q_type]
                 s += Q_H
                 s += Eval.formatted_question_stats(responses[q_num])
             else:
                 for i, res in enumerate(sorted(responses[q_num])):
-                    s += '%7s %3d. %s\n' % ('', i+1, res)
+                    if '\n' in res:
+                        s += '%5s %3d. %s\n' % ('', i + 1,
+                                                res.replace('\n',
+                                                            '\n%11s' % ''))
+                    else:
+                        s += '%5s %3d. %s\n' % ('', i+1, res)
                 s += '\n'
         return s
 
@@ -201,13 +217,31 @@ class AdminStatPage(webapp.RequestHandler):
             if obj == None:
                 return self.redirect('/admin')
             evals.append(obj)
+            title = ta
         elif course != None:
             course = urllib.unquote(course)
             evals.extend([x for x in Eval.all().filter('course =', course)])
+            title = course
         else:
             evals.extend([x for x in Eval.all()])
-        
-        print Eval.generate_summary(evals)
+            title = 'all'
+
+        if not evals:
+            return self.redirect('/admin')
+
+        results = Eval.generate_summary(evals)
+
+        if self.request.get('dl') == '1':
+            self.response.headers['Content-Type'] = 'text/plain'
+            content_disposition = 'attachement; filename="%s.txt"' % title
+            self.response.headers['Content-Disposition'] = content_disposition
+            self.response.out.write(results)
+        else:
+            path = os.path.join(VIEW_PATH, 'results.html')
+            dl_url = '%s?dl=1' % self.request.url
+            template_values = {'results':results, 'title':title,
+                               'dl_url':dl_url}
+            self.response.out.write(template.render(path, template_values))
 
 
 class AdminPage(webapp.RequestHandler):

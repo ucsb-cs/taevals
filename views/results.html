@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+
+{% block title %}{{ title }} Results{% endblock %}
+
+{% block content %}
+<h3>{{ title }} Results</h3>
+<pre>
+{{ results }}
+</pre>
+
+<p><a href="{{ dl_url }}">Download result</a></p>
+{% endblock %}
