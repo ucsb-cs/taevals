@@ -202,8 +202,8 @@ class EvalPage(webapp.RequestHandler):
         responses = self.request.get_all('response')
 
         for i in range(len(QUESTIONS)):
-            if i > len(responses):
-                responses[i] = ''
+            if i >= len(responses):
+                responses.append('')
                 continue
             if QUESTIONS[i][1] in [0, 1]:
                 if responses[i] not in ['0', '1', '2', '3', '4', '5']:
@@ -213,7 +213,12 @@ class EvalPage(webapp.RequestHandler):
         if errors:
             return self.get(key, ta, responses, errors=errors)
 
-        db.run_in_transaction(Eval.create_or_update, ta, ei.course, responses)
+        try:
+            db.run_in_transaction(Eval.create_or_update, ta, ei.course,
+                                  responses)
+        except apiproxy_errors.RequestTooLargeError, message:
+            return self.get(key, ta, responses,
+                            errors=['Your response is too long'])
 
         # Remove TA from list of TAs student can evaluate
         ei.tas.remove(ta)
