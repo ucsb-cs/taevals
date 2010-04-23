@@ -1,5 +1,6 @@
 import cgi, datetime, os, pickle, random, re, tarfile, time, urllib, StringIO
 from google.appengine.api import mail, users
+from google.appengine.api.labs import taskqueue
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
 from google.appengine.ext.webapp.util import run_wsgi_app
@@ -274,7 +275,7 @@ class ResultDownload(webapp.RequestHandler):
         for ev in Eval.all():
             filename = 'taevals/%s-%s.txt' % (ev.course,
                                               ev.ta.replace(' ', '_'))
-            results = Eval.generate_summary([ev])
+            results = Eval.generate_summary([ev]).encode('utf-8')
             tarinfo = tarfile.TarInfo(filename)
             tarinfo.size = len(results)
             tarinfo.mtime = time.time()
@@ -285,6 +286,45 @@ class ResultDownload(webapp.RequestHandler):
         self.response.headers['Content-Type'] = 'application/x-compressed'
         self.response.headers['Content-Disposition'] = cd
         self.response.out.write(outfile.getvalue())
+
+class EmailWorker(webapp.RequestHandler):
+    def post(self):
+        email_from = self.request.get('from').strip()
+        nickname = self.request.get('nickname').strip()
+        if email_from == '' or nickname == '':
+            return self.response.set_status(400)
+
+        students = {}
+        for ei in EvalInvite.all():
+            if not ei.tas: continue
+            elif ei.email_sent: continue
+
+            if ei.email in students:
+                students[ei.email][ei.course] = (ei.key().name(), ei.tas)
+            else:
+                students[ei.email] = {ei.course:(ei.key().name(), ei.tas)}
+
+        for email, courses in students.items():
+            output = ''
+            for course in sorted(courses):
+                key, tas = courses[course]
+                url = 'https://%s/eval/%s' % (os.environ['HTTP_HOST'], key)
+                output += '\n'.join(['-%s' % course,
+                                     '\tTAs: %s' % ', '.join(sorted(tas)),
+                                     '\tURL: %s' % url, ''])
+            try:
+                mail.send_mail(email_from, email, EMAIL_SUBJECT,
+                               EMAIL_TEMPLATE % (output, nickname))
+                # Update invite email_sent field
+                for course in courses:
+                    key, _ = courses[course]
+                    ei = EvalInvite.get_by_key_name(key)
+                    ei.email_sent = True
+                    ei.put()
+            except apiproxy_errors.OverQuotaError, message:
+                taskqueue.add(url='/admin/email', params={'from':email_from,
+                                                          'nickname':nickname})
+                break
 
 
 class AdminPage(webapp.RequestHandler):
@@ -333,7 +373,7 @@ class AdminPage(webapp.RequestHandler):
             return self.get(errors=['Invalid form token.'])
 
         if action == 'email':
-            self.email_invites()
+            self.setup_email_invites()
         elif action == 'upload':
             self.upload_csv()
         elif action == 'reset':
@@ -345,56 +385,19 @@ class AdminPage(webapp.RequestHandler):
         return 'token' in self.request.cookies and \
             self.request.cookies['token'] == self.request.get('token')
 
-    def email_invites(self):
+    def setup_email_invites(self):
         if self.request.get('name') == '':
             return self.get(errors=['From name cannot be blank'])
         else:
             nickname = self.request.get('name')
-        students = {}
-        for ei in EvalInvite.all():
-            if not ei.tas: continue
-            elif ei.email_sent: continue
-
-            if ei.email in students:
-                students[ei.email][ei.course] = (ei.key().name(), ei.tas)
-            else:
-                students[ei.email] = {ei.course:(ei.key().name(), ei.tas)}
-
         user = users.get_current_user()
         email_from = '%s <%s>' % (nickname, user.email())
 
-        errors = []
-        sent = 0
+        taskqueue.add(url='/admin/email', params={'from':email_from,
+                                                  'nickname':nickname})
+        self.get(['Emails queued'])
 
-        for email, courses in students.items():
-            output = ''
-            for course in sorted(courses):
-                key, tas = courses[course]
-                url = 'https://%s/eval/%s' % (os.environ['HTTP_HOST'], key)
-                output += '\n'.join(['-%s' % course,
-                                     '\tTAs: %s' % ', '.join(sorted(tas)),
-                                     '\tURL: %s' % url, ''])
-            try:
-                mail.send_mail(email_from, email, EMAIL_SUBJECT,
-                               EMAIL_TEMPLATE % (output, nickname))
-
-                # Update invite email_sent field
-                for course in courses:
-                    key, _ = courses[course]
-                    ei = EvalInvite.get_by_key_name(key)
-                    ei.email_sent = True
-                    ei.put()
-
-                sent += 1
-            except apiproxy_errors.OverQuotaError, message:
-                errors.append(message)
-                break
-                
         
-        self.get(['Sent %d emails from %s. Remaining: %d' %
-                  (sent, cgi.escape(email_from), len(students) - sent)],
-                 errors=errors)
-
     def upload_csv(self):
         tas = self.request.get('tas')
         students = self.request.get('students')
@@ -487,8 +490,9 @@ class Dummy(object):
 application = webapp.WSGIApplication([('/', HomePage),
                                       (r'/eval/([0-9a-f]+)', EvalPage),
                                       ('/admin', AdminPage),
+                                      ('/admin/all', AdminStatPage),
                                       ('/admin/dl', ResultDownload),
-                                      (r'/admin/all', AdminStatPage),
+                                      ('/admin/email', EmailWorker),
                                       (r'/admin/s/([^/]+)', AdminStatPage),
                                       (r'/admin/s/([^/]+)/([^/]+)',
                                        AdminStatPage),
