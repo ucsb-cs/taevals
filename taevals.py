@@ -200,7 +200,7 @@ class EvalPage(webapp.RequestHandler):
             errors.append('Must select a TA to evaluate')
             ta = ''
 
-        responses = self.request.get_all('response')
+        responses = self.get_responses()
 
         for i in range(len(QUESTIONS)):
             if i >= len(responses):
@@ -226,6 +226,21 @@ class EvalPage(webapp.RequestHandler):
         ei.put()
 
         self.get(key, success='Evaluated: %s' % ta)
+
+    def get_responses(self):
+        args = self.request.arguments()
+        resp_args = [int(x[4:]) - 1 for x in args if x.startswith('resp')]
+
+        responses = []
+        count = 0
+        for resp_num in sorted(resp_args):
+            while count < resp_num:
+                responses.append('')
+                count += 1
+            responses.append(self.request.get('resp%d' % (resp_num + 1)))
+            count += 1
+
+        return responses
 
 
 class AdminStatPage(webapp.RequestHandler):

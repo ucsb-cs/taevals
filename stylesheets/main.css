@@ -1,3 +1,71 @@
 body {
-  font-family: Verdana, Helvetica, sans-serif;
+  font-family: Verdana,
+	       Geneva,
+               "Lucida Sans",
+               "Lucida Grande",
+               "Lucida Sans Unicode",
+               sans-serif;
+  background: #FFFFFF;
+  width: 900px;
+  margin: 0 auto;
+}
+
+
+#content {
+    padding: 20px;
+}
+
+#content h1 {
+    text-align: center;
+}
+
+#email {
+    text-align: right;
+}
+
+#email p {
+    margin: 0;
+}
+
+#ta {
+    font-size: 1.2em;
+    font-weight: bold;
+}
+
+#submit {
+    padding-top: 20px;
+    text-align: center;
+
+}
+
+#submit input {
+    font-size: 1.2em;
+}
+
+.question-wrapper {
+    padding: 10px 0;
+}
+
+.question {
+    padding: 5px 0;
+}
+
+.choices {
+    text-align: center;
+}
+
+.choices label {
+    padding-right: 20px;
+}
+
+.error {
+    color: #F00;
+}
+
+.warning {
+    color: #FC0;
+}
+
+.success {
+    color: #00F;
 }

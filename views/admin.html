@@ -3,18 +3,19 @@
 {% block title %}TA Evaluations Admin Panel{% endblock %}
 
 {% block content %}
-<p>Hello {{ admin.email }}</p>
+
+<div id="email"><p>{{ admin.email }}</p></div>
 
 {% for error in errors %}
-  <div style="color:#F00">Error: {{ error }}</div>
+  <div class="error">Error: {{ error }}</div>
 {% endfor %}
 
 {% for warning in warnings %}
-  <div style="color:#FC0">Warning: {{ warning }}</div>
+  <div class="warning">Warning: {{ warning }}</div>
 {% endfor %}
 
 {% for success in successes %}
-  <div style="color:#00F">{{ success }}</div>
+  <div class="success">{{ success }}</div>
 {% endfor %}
 
 {% if not courses %}
@@ -29,7 +30,7 @@
     </div>
   </form>
 {% else %}
-  <h2>Statistics</h2>
+  <h1>Statistics</h1>
   <div><a href="/admin/all">All</a></div>
   <ol>
   {% for course in courses.items %}

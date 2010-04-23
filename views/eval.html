@@ -4,11 +4,11 @@
 
 {% block content %}
 {% for error in errors %}
-  <div style="color:#F00">Error: {{ error }}</div>
+  <div class="error">Error: {{ error }}</div>
 {% endfor %}
 
 {% if success %}
-  <div style="color:#00F">{{ success }}</div>
+  <div class="success">{{ success }}</div>
 {% endif %}
 
 <h1>{{ ei.course }} Midterm TA Evaluation</h1>
@@ -17,84 +17,95 @@
   <p>The evaluation period has expired.</p>
 {% else %}{% if ei.tas %}
   <form action="" method="post">
-    {% if ei.tas|length_is:1 %}
-      <div>TA: {{ ei.tas.0 }}</div>
-      <input type="hidden" name="ta" value="{{ ei.tas.0 }}" />
-    {% else %}
-      <div>TA 
-	<select name="ta">
-	  <option
-	     {% ifequal sel_ta '' %}selected="selected" {% endifequal %}
-	     value="">Select ...</option>
-	  {% for ta in ei.tas %}
-            <option
-	       {% ifequal sel_ta ta %}selected="selected" {% endifequal %}
-	       value="{{ ta }}">{{ ta }}</option>
-	  {% endfor %}
-	</select>
+    <div id="ta">TA 
+      <select name="ta">
+	<option {% ifequal sel_ta '' %}selected="selected" {% endifequal %}
+		value="">Select ...</option>
+	{% for ta in ei.tas %}
+          <option {% ifequal sel_ta ta %}selected="selected" {% endifequal %}
+		  value="{{ ta }}">{{ ta }}</option>
+	{% endfor %}
+      </select>
+    </div>
 
-      </div>
-    {% endif %}
-
-    {% for question in questions %}
-      <div style="padding-top:10px">
-	<div>{{ question.0.0 }}</div>
-	{% ifequal question.0.1 0 %}
-	  <select name="response">
-	    <option
-	       {% ifequal question.1 '' %}selected="selected" {% endifequal %}
-	       value="">Select ...</option>
-	    <option
-	       {% ifequal question.1 '1' %}selected="selected" {% endifequal %}
-	       value="1">1 -- Exceptional</option>
-	    <option
-	       {% ifequal question.1 '2' %}selected="selected" {% endifequal %}
-	       value="2">2 -- Good</option>
-	    <option
-	       {% ifequal question.1 '3' %}selected="selected" {% endifequal %}
-	       value="3">3 -- Average</option>
-	    <option
-	       {% ifequal question.1 '4' %}selected="selected" {% endifequal %}
-	       value="4">4 -- Fair</option>
-	    <option
-	       {% ifequal question.1 '5' %}selected="selected" {% endifequal %}
-	       value="5">5 -- Poor</option>
-	    <option
-	       {% ifequal question.1 '0' %}selected="selected" {% endifequal %}
-	       value="0">Decline to Respond</option>
-	  </select>		  
-	{% else %}{% ifequal question.0.1 1 %}
-	  <select name="response">
-	    <option
-	       {% ifequal question.1 '' %}selected="selected" {% endifequal %}
-	       selected="selected" value="">Select ...</option>
-	    <option
-	       {% ifequal question.1 '1' %}selected="selected" {% endifequal %}
-	       value="1">1 -- Always</option>
-	    <option
-	       {% ifequal question.1 '2' %}selected="selected" {% endifequal %}
-	       value="2">2 -- Sometimes</option>
-	    <option
-	       {% ifequal question.1 '3' %}selected="selected" {% endifequal %}
-	       value="3">3 -- Occasionally</option>
-	    <option
-	       {% ifequal question.1 '4' %}selected="selected" {% endifequal %}
-	       value="4">4 -- Seldom</option>
-	    <option
-	       {% ifequal question.1 '5' %}selected="selected" {% endifequal %}
-	       value="5">5 -- Never</option>
-	    <option
-	       {% ifequal question.1 '0' %}selected="selected" {% endifequal %}
-	       value="0">Decline to Respond</option>
-	  </select>		  
-	{% else %}{% ifequal question.0.1 2 %}
-	  <textarea name="response" rows="5" cols="80">{{ question.1 }}</textarea>
+    {% for ques in questions %}
+      <div class="question-wrapper">
+	<div class="question">{{ forloop.counter }}) {{ ques.0.0 }}</div>
+	{% ifequal ques.0.1 0 %}
+	<div class="choices">
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="1"
+		   {% ifequal ques.1 '1' %}checked="checked"{% endifequal %} />
+	    Exceptional
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="2"
+		   {% ifequal ques.1 '2' %}checked="checked"{% endifequal %} />
+	    Good
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="3"
+		   {% ifequal ques.1 '3' %}checked="checked"{% endifequal %} />
+	    Average
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="4"
+		   {% ifequal ques.1 '4' %}checked="checked"{% endifequal %} />
+	    Fair
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="5"
+		   {% ifequal ques.1 '5' %}checked="checked"{% endifequal %} />
+	    Poor
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="0"
+		   {% ifequal ques.1 '0' %}checked="checked"{% endifequal %} />
+	    Decline to Respond
+	  </label>
+	</div>
+	{% else %}{% ifequal ques.0.1 1 %}
+	<div class="choices">
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="1"
+		   {% ifequal ques.1 '1' %}checked="checked"{% endifequal %} />
+	    Always
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="2"
+		   {% ifequal ques.1 '2' %}checked="checked"{% endifequal %} />
+	    Sometimes
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="3"
+		   {% ifequal ques.1 '3' %}checked="checked"{% endifequal %} />
+	    Occasionally
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="4"
+		   {% ifequal ques.1 '4' %}checked="checked"{% endifequal %} />
+	    Seldom
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="5"
+		   {% ifequal ques.1 '5' %}checked="checked"{% endifequal %} />
+	    Never
+	  </label>
+	  <label>
+	    <input type="radio" name="resp{{ forloop.counter }}" value="0"
+		   {% ifequal ques.1 '0' %}checked="checked"{% endifequal %} />
+	    Decline to Respond
+	  </label>
+	</div>
+	{% else %}{% ifequal ques.0.1 2 %}
+	  <textarea name="resp{{ forloop.counter }}" rows="5"
+		    cols="108">{{ ques.1 }}</textarea>
 	{% else %}
 	  Unsupported Question Type
 	{% endifequal %}{% endifequal %}{% endifequal %}
       </div>
     {% endfor %}
-    <div><input type="submit" value="Evaluate TA" /></div>
+    <div id="submit"><input type="submit" value="Submit Evaluation" /></div>
   </form>
 {% else %}
   <p>No more TAs to evaluate for this class. Thanks!</p>
