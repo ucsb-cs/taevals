@@ -5,6 +5,7 @@
 {% block content %}
 
 <div id="email"><p>{{ admin.email }}</p></div>
+<div id="email"><p>Eval Duration: {{ eval_time }} hours</p></div>
 
 {% for error in errors %}
   <div class="error">Error: {{ error }}</div>

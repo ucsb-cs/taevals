@@ -12,10 +12,10 @@ from google.appengine.runtime import apiproxy_errors
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
 CD_ATTACHMENT = 'attachement; filename="%s"'
 
-EVAL_TIME = 3 # in hours
+EVAL_TIME = 175 # in hours
 
-COURSE_RE = re.compile('^[a-zA-Z0-9]+$')
-TA_NAME_RE = re.compile('^[a-zA-Z ]+$')
+COURSE_RE = re.compile('^[a-zA-Z0-9_]+$')
+TA_NAME_RE = re.compile('^[a-zA-Z -]+$')
 STUDENT_EMAIL_RE = re.compile('^.*@.*$')
 
 EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluations'
@@ -374,7 +374,7 @@ class AdminPage(webapp.RequestHandler):
         template_values = {'successes':successes, 'warnings':warnings,
                            'errors':errors, 'courses':courses,
                            'admin':users.get_current_user(),
-                           'form_token':form_token}
+                           'form_token':form_token, 'eval_time':EVAL_TIME}
         path = os.path.join(VIEW_PATH, 'admin.html')
         self.response.headers.add_header("Set-Cookie", cookie)
         self.response.out.write(template.render(path, template_values))
