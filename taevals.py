@@ -4,7 +4,7 @@ from google.appengine.api.labs import taskqueue
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
 from google.appengine.ext.webapp.util import run_wsgi_app
-from google.appengine.runtime import apiproxy_errors
+from google.appengine.runtime import apiproxy_errors, DeadlineExceededError
 
 # catch CapabilityDisabledError on model puts for downtimes
 # Test resource http://pastebin.com/bbidrU7g
@@ -302,6 +302,24 @@ class ResultDownload(webapp.RequestHandler):
         self.response.headers['Content-Disposition'] = cd
         self.response.out.write(outfile.getvalue())
 
+
+class InitInvitesWorker(webapp.RequestHandler):
+    def post(self):
+        course = self.request.get('course')
+        students = self.request.get_all('students')
+        tas = self.request.get_all('tas')
+
+        for student in students[:]:
+            try:
+                EvalInvite.create_new(student, course, tas)
+            except DeadlineExceededError, message:
+                taskqueue.add(url='/admin/init', params={'course':course,
+                                                         'students':students,
+                                                         'tas':tas})
+                return self.response.set_status(200)
+            students.remove(student)
+
+
 class EmailWorker(webapp.RequestHandler):
     def post(self):
         email_from = self.request.get('from').strip()
@@ -337,9 +355,9 @@ class EmailWorker(webapp.RequestHandler):
                     ei.email_sent = True
                     ei.put()
             except apiproxy_errors.OverQuotaError, message:
-                taskqueue.add(url='/admin/email', params={'from':email_from,
-                                                          'nickname':nickname})
-                break
+                taskqueue.add(url='/admin/email', countdown=60,
+                              params={'from':email_from, 'nickname':nickname})
+                return self.response.set_status(200)
 
 
 class AdminPage(webapp.RequestHandler):
@@ -447,11 +465,12 @@ class AdminPage(webapp.RequestHandler):
 
         if len(errors) == 0:
             for course in courses:
-                for student in course_students[course]:
-                    EvalInvite.create_new(student, course, course_tas[course])
-                successes.append('Added %s: %d students %d tas' %
-                                 (course, len(course_students[course]),
-                                  len(course_tas[course])))
+                taskqueue.add(url='/admin/init',
+                              params={'course':course,
+                                      'students':course_students[course],
+                                      'tas':course_tas[course]})
+            successes.append('Created invite creation task')
+
         self.get(successes, warnings, errors)
 
     def reset(self):
@@ -508,6 +527,7 @@ application = webapp.WSGIApplication([('/', HomePage),
                                       ('/admin/all', AdminStatPage),
                                       ('/admin/dl', ResultDownload),
                                       ('/admin/email', EmailWorker),
+                                      ('/admin/init', InitInvitesWorker),
                                       (r'/admin/s/([^/]+)', AdminStatPage),
                                       (r'/admin/s/([^/]+)/([^/]+)',
                                        AdminStatPage),
