@@ -1,4 +1,5 @@
-import cgi, datetime, os, pickle, random, re, tarfile, time, urllib, StringIO
+import cgi, datetime, math, os, pickle, random, re, tarfile, time, urllib
+import StringIO
 from google.appengine.api import mail, users
 from google.appengine.api.labs import taskqueue
 from google.appengine.ext import db, webapp
@@ -12,11 +13,13 @@ from google.appengine.runtime import apiproxy_errors, DeadlineExceededError
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
 CD_ATTACHMENT = 'attachement; filename="%s"'
 
-EVAL_TIME = 175 # in hours
+EVAL_TIME = 160 # in hours
 
 COURSE_RE = re.compile('^[a-zA-Z0-9_]+$')
 TA_NAME_RE = re.compile('^[a-zA-Z -]+$')
 STUDENT_EMAIL_RE = re.compile('^.*@.*$')
+
+MAX_DELETES = 250
 
 EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluations'
 EMAIL_TEMPLATE = """Student,
@@ -477,8 +480,10 @@ class AdminPage(webapp.RequestHandler):
         if self.request.get('confirm') != '0xDEADBEEF':
             self.get(errors=['Invalid confirmation'])
         else:
-            db.delete([x for x in EvalInvite.all(keys_only=True)])
-            db.delete([x for x in Eval.all(keys_only=True)])
+            keys = [x for x in EvalInvite.all(keys_only=True)]
+            keys.extend([x for x in Eval.all(keys_only=True)])
+            for i in range(int(math.ceil(len(keys) * 1. / MAX_DELETES))):
+                db.delete(keys[i * MAX_DELETES:(i + 1) * MAX_DELETES])
             self.get(successes=['Reset Database'])
 
     @staticmethod

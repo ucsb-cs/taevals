@@ -19,6 +19,10 @@ handlers:
   script: taevals.py
   secure: always
 
+- url: /remote_api
+  script: $PYTHON_LIB/google/appengine/ext/remote_api/handler.py
+  login: admin
+
 - url: /.*
   script: taevals.py
   secure: never
