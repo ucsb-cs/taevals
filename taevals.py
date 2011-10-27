@@ -238,7 +238,7 @@ class EvalPage(webapp.RequestHandler):
         ei = EvalInvite.get_by_key_name(key)
         if ei:
             remaining = ei.remaining_evals()
-            if not remaining:
+            if not remaining and not ei.tas:
                 if not Completed.all().filter('email', ei.email).fetch(1):
                     body = COMPLETED_EMAIL_TEMPLATE % ei.email_from_nick
                     try:
