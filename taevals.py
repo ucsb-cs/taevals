@@ -1,7 +1,10 @@
-import cgi, datetime, math, os, pickle, random, re, tarfile, time, urllib
-import StringIO
-from google.appengine.api import mail, users
-from google.appengine.api.labs import taskqueue
+import cgi, datetime, logging, math, os, pickle, random, re, tarfile, time
+import urllib, StringIO
+
+from google.appengine.dist import use_library
+use_library('django', '1.2')
+
+from google.appengine.api import mail, taskqueue, users
 from google.appengine.ext import db, webapp
 from google.appengine.ext.webapp import template
 from google.appengine.ext.webapp.util import run_wsgi_app
@@ -13,7 +16,7 @@ from google.appengine.runtime import apiproxy_errors, DeadlineExceededError
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
 CD_ATTACHMENT = 'attachement; filename="%s"'
 
-EVAL_TIME = 160 # in hours
+EVAL_TIME = 120 # in hours
 
 COURSE_RE = re.compile('^[a-zA-Z0-9_]+$')
 TA_NAME_RE = re.compile('^[a-zA-Z -]+$')
@@ -24,13 +27,45 @@ MAX_DELETES = 250
 EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluations'
 EMAIL_TEMPLATE = """Student,
 
-You are receiving this email because you are currently enrolled in the
-following Computer Science Department courses. Please submit an evaluation for
-at least one TA in each course you are enrolled in.
+You are receiving this email because you are currently enrolled in the Computer
+Science Department courses listed below. Your feedback is incredibly important
+as it allows your TA to make the necessary adjustments in order to be of better
+help to you and other students. Please submit an evaluation for the appropriate
+TA(s) in each course you are enrolled in. For TAs with whom you do not
+interact, please select the "Not Applicable" response.
+
+Students who complete 100%% of their evaluations will be automatically entered
+into a raffle for a $25 gift card at Amazon. You will receive an additional
+email stating your entrance into the raffle when you've completed all the
+evaluations.
+
+Please note that the aggregate feedback for each TA will be viewed by that TA,
+in addition to the Lead TA (http://cs.ucsb.edu/~leadta) and the course
+instructor.
+
+It is important to note that this evaluation system was designed to provide you
+with anonymity. The server's database stores the aggregate results for each TA,
+as well as a mapping between emails and outstanding evaluations. Upon form
+submission, your evaluation is automatically aggregated with the other
+evaluations for a particular TA, thus there is no way to associate you to your
+submission. Furthermore, the Lead TA is the only person with access to the
+server's database. The complete source for the evaluation web app is available
+at http://code.google.com/p/taevals/
 
 %s
 
 Thank You,
+%s"""
+
+COMPLETED_EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluation Raffle'
+COMPLETED_EMAIL_TEMPLATE = """Student,
+
+Thank you for completing all of your midterm TA evaluations. In appreciation of
+your efforts, you have been automatically entered into our raffle for a $25
+Amazon gift card. The winner will be announced through the CS mailing list
+shortly after the evaluation period ends.
+
+Thanks,
 %s"""
 
 QUESTIONS = [
@@ -49,10 +84,19 @@ Q_KEY = ['(1) Exceptional  (2) Good  (3) Average  (4) Fair  (5) Poor',
          '(1) Always  (2) Sometimes  (3) Occasionally  (4) Seldom  (5) Never']
 Q_H = '        weight:  (1)  (2)  (3)  (4)  (5) | Blank  Total  Mean  Median\n'
 
+def nsorted(l):
+    convert = lambda text: int(text) if text.isdigit() else text
+    key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
+    return sorted(l, key=key)
+
+class Completed(db.Model):
+    email = db.StringProperty(required=True)
 
 class EvalInvite(db.Model):
     email = db.StringProperty(required=True)
     email_sent = db.BooleanProperty(default=False)
+    email_from = db.StringProperty()
+    email_from_nick = db.StringProperty()
     course = db.StringProperty(required=True)
     tas = db.StringListProperty(required=True)
     date = db.DateTimeProperty(auto_now_add=True)
@@ -66,6 +110,24 @@ class EvalInvite(db.Model):
                                            course=course, tas=tas)
             cur = tmp.email, tmp.course
         return tmp
+
+    @property
+    def url(self):
+        return 'https://%s/eval/%s' % (os.environ['HTTP_HOST'],
+                                       self.key().name())
+
+    def __lt__(self, other):
+        return self.course == nsorted((self.course, other.course))[0]
+
+    def remaining_evals(self):
+        query = EvalInvite.all()
+        query.filter('__key__ !=', self.key())
+        query.filter('email', self.email)
+        remaining = []
+        for ei in query:
+            if len(ei.tas):
+                remaining.append(ei)
+        return sorted(remaining)
 
 
 class Eval(db.Model):
@@ -175,6 +237,18 @@ class EvalPage(webapp.RequestHandler):
     def get(self, key, ta='', responses=None, success=None, errors=None):
         ei = EvalInvite.get_by_key_name(key)
         if ei:
+            remaining = ei.remaining_evals()
+            if not remaining:
+                if not Completed.all().filter('email', ei.email).fetch(1):
+                    body = COMPLETED_EMAIL_TEMPLATE % ei.email_from_nick
+                    try:
+                        mail.send_mail(ei.email_from, ei.email,
+                                       COMPLETED_EMAIL_SUBJECT, body)
+                    except apiproxy_errors.OverQuotaError, message:
+                        logging.error(message)
+                    a = Completed(email=ei.email)
+                    a.put()
+
             expire_time = ei.date + datetime.timedelta(hours=EVAL_TIME)
             ei.expired = datetime.datetime.now() > expire_time
 
@@ -183,7 +257,8 @@ class EvalPage(webapp.RequestHandler):
             questions = zip(QUESTIONS, responses)
 
             template_values = {'ei':ei, 'success':success, 'errors':errors,
-                               'sel_ta':ta, 'questions':questions}
+                               'sel_ta':ta, 'questions':questions,
+                               'remaining':remaining}
             path = os.path.join(VIEW_PATH, 'eval.html')
             self.response.out.write(template.render(path, template_values))
         else:
@@ -196,39 +271,40 @@ class EvalPage(webapp.RequestHandler):
         if datetime.datetime.now() > expire_time:
             return self.get(key)
 
-        errors = []
-
         ta = self.request.get('ta')
         if ta not in ei.tas:
-            errors.append('Must select a TA to evaluate')
-            ta = ''
+            return self.get(key, errors=('Must select a TA to evaluate',))
 
-        responses = self.get_responses()
+        if self.request.get('not_applicable'):
+            success = 'Not Applicable: %s' % ta
+        else:
+            errors = []
+            responses = self.get_responses()
 
-        for i in range(len(QUESTIONS)):
-            if i >= len(responses):
-                responses.append('')
-                continue
-            if QUESTIONS[i][1] in [0, 1]:
-                if responses[i] not in ['0', '1', '2', '3', '4', '5']:
-                    responses[i] = ''
-                    errors.append('Must provide an answer for "%s"' %
-                                  QUESTIONS[i][0])
-        if errors:
-            return self.get(key, ta, responses, errors=errors)
+            for i in range(len(QUESTIONS)):
+                if i >= len(responses):
+                    responses.append('')
+                    continue
+                if QUESTIONS[i][1] in [0, 1]:
+                    if responses[i] not in ['0', '1', '2', '3', '4', '5']:
+                        responses[i] = ''
+                        errors.append('Must provide an answer for "%s"' %
+                                      QUESTIONS[i][0])
+            if errors:
+                return self.get(key, ta, responses, errors=errors)
 
-        try:
-            db.run_in_transaction(Eval.create_or_update, ta, ei.course,
-                                  responses)
-        except apiproxy_errors.RequestTooLargeError, message:
-            return self.get(key, ta, responses,
-                            errors=['Your response is too long'])
+            try:
+                db.run_in_transaction(Eval.create_or_update, ta, ei.course,
+                                      responses)
+            except apiproxy_errors.RequestTooLargeError, message:
+                return self.get(key, ta, responses,
+                                errors=('Your response is too long',))
+            success = 'Evaluated: %s' % ta
 
         # Remove TA from list of TAs student can evaluate
         ei.tas.remove(ta)
         ei.put()
-
-        self.get(key, success='Evaluated: %s' % ta)
+        self.get(key, success=success)
 
     def get_responses(self):
         args = self.request.arguments()
@@ -336,26 +412,24 @@ class EmailWorker(webapp.RequestHandler):
             elif ei.email_sent: continue
 
             if ei.email in students:
-                students[ei.email][ei.course] = (ei.key().name(), ei.tas)
+                students[ei.email].append(ei)
             else:
-                students[ei.email] = {ei.course:(ei.key().name(), ei.tas)}
+                students[ei.email] = [ei]
 
-        for email, courses in students.items():
+        for email, eis in students.items():
             output = ''
-            for course in sorted(courses):
-                key, tas = courses[course]
-                url = 'https://%s/eval/%s' % (os.environ['HTTP_HOST'], key)
-                output += '\n'.join(['-%s' % course,
-                                     '\tTAs: %s' % ', '.join(sorted(tas)),
-                                     '\tURL: %s' % url, ''])
+            for ei in sorted(eis):
+                output += '\n'.join(['-%s' % ei.course,
+                                     '\tTAs: %s' % ', '.join(sorted(ei.tas)),
+                                     '\tURL: %s' % ei.url, ''])
             try:
                 mail.send_mail(email_from, email, EMAIL_SUBJECT,
                                EMAIL_TEMPLATE % (output, nickname))
                 # Update invite email_sent field
-                for course in courses:
-                    key, _ = courses[course]
-                    ei = EvalInvite.get_by_key_name(key)
+                for ei in eis:
                     ei.email_sent = True
+                    ei.email_from = email_from
+                    ei.email_from_nick = nickname
                     ei.put()
             except apiproxy_errors.OverQuotaError, message:
                 taskqueue.add(url='/admin/email', countdown=60,
@@ -391,6 +465,13 @@ class AdminPage(webapp.RequestHandler):
         expires = datetime.datetime.now() + datetime.timedelta(minutes=5)
         expires_rfc822 = expires.strftime('%a %d %b %Y %H:%M:%S GMT')
         cookie = "token=%s;expires=%s;path=/" % (form_token, expires_rfc822)
+
+        # Make more user friendly
+        if warnings:
+            warnings = sorted(warnings)
+        if errors:
+            errors = sorted(errors)
+        courses = [(x, sorted(courses[x].items())) for x in nsorted(courses)]
 
         template_values = {'successes':successes, 'warnings':warnings,
                            'errors':errors, 'courses':courses,
@@ -482,6 +563,7 @@ class AdminPage(webapp.RequestHandler):
         else:
             keys = [x for x in EvalInvite.all(keys_only=True)]
             keys.extend([x for x in Eval.all(keys_only=True)])
+            keys.extend([x for x in Completed.all(keys_only=True)])
             for i in range(int(math.ceil(len(keys) * 1. / MAX_DELETES))):
                 db.delete(keys[i * MAX_DELETES:(i + 1) * MAX_DELETES])
             self.get(successes=['Reset Database'])
@@ -494,7 +576,7 @@ class AdminPage(webapp.RequestHandler):
             if len(split) < 2:
                 errors.add('Invalid TA file beginning at: %s' % line)
                 break
-            course = split[0]
+            course = split[0].lower()
             names = split[1:]
             
             if not COURSE_RE.match(course):

@@ -34,10 +34,10 @@
   <h1>Statistics</h1>
   <div><a href="/admin/all">All</a></div>
   <ol>
-  {% for course in courses.items %}
+  {% for course in courses %}
     <li><a href="/admin/s/{{ course.0 }}">{{ course.0 }}</a>
       <ol>
-	{% for ta in course.1.items %}
+	{% for ta in course.1 %}
 	  <li><a href="/admin/s/{{ course.0 }}/{{ ta.0 }}">{{ ta.0 }}</a>:
 	    {{ ta.1.completed }} completed, {{ ta.1.remaining }} remaining</li>
 	{% endfor %}
