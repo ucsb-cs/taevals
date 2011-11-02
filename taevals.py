@@ -1,5 +1,5 @@
-import cgi, datetime, logging, math, os, pickle, random, re, tarfile, time
-import urllib, StringIO
+import cgi, datetime, logging, math, os, pickle, random, re, tarfile, textwrap
+import time, urllib, StringIO
 
 from google.appengine.dist import use_library
 use_library('django', '1.2')
@@ -189,6 +189,7 @@ class Eval(db.Model):
 
     @staticmethod
     def generate_summary(evals):
+        wrapper = textwrap.TextWrapper(width=79)
         responses = evals[0].get_responses()
         for eval in evals[1:]:
             tmp = eval.get_responses()
@@ -200,19 +201,19 @@ class Eval(db.Model):
                     responses[q_num].extend(tmp[q_num])
         s = ''
         for q_num, (question, q_type) in enumerate(QUESTIONS):
-            s += '    %2d. %s\n' % (q_num+1, question)
+            wrapper.initial_indent = wrapper.subsequent_indent = ' ' * 8
+            s += '    %2d. %s\n' % (q_num+1, wrapper.fill(question)[8:])
+            wrapper.initial_indent = wrapper.subsequent_indent = ' ' * 11
             if q_type in [0, 1]:
                 s += '        %s\n' % Q_KEY[q_type]
                 s += Q_H
                 s += Eval.formatted_question_stats(responses[q_num])
             else:
                 for i, res in enumerate(sorted(responses[q_num])):
-                    if '\n' in res:
-                        s += '%5s %3d. %s\n' % ('', i + 1,
-                                                res.replace('\n',
-                                                            '\n%11s' % ''))
-                    else:
-                        s += '%5s %3d. %s\n' % ('', i+1, res)
+                    tmp = ''
+                    for block in res.split('\n'):
+                        tmp += '%s\n' % wrapper.fill(block)
+                    s += '%5s %3d. %s' % (' ', i+1, tmp[11:])
                 s += '\n'
         return s
 
