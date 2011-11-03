@@ -20,7 +20,7 @@ EVAL_TIME = 120 # in hours
 
 COURSE_RE = re.compile('^[a-zA-Z0-9_]+$')
 TA_NAME_RE = re.compile('^[a-zA-Z -]+$')
-STUDENT_EMAIL_RE = re.compile('^.*@.*$')
+EMAIL_RE = re.compile('^.*@.*$')
 
 MAX_DELETES = 250
 
@@ -57,6 +57,19 @@ at http://code.google.com/p/taevals/
 Thank You,
 %s"""
 
+RESULT_EMAIL_SUBJECT = 'CS Midterm TA Evaluation Results'
+RESULT_EMAIL_TEMPLATE = """%s,
+
+Attached are your individual TA evaluation results, along with the aggregrate
+results across all TAs of the same course this quarter, and the aggregate
+results for all CS department TAs this quarter. The instructor of the course
+has been copied on this email.
+
+If you have any questions please do not hesitate to ask.
+
+Thanks,
+%s"""
+
 COMPLETED_EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluation Raffle'
 COMPLETED_EMAIL_TEMPLATE = """Student,
 
@@ -88,6 +101,13 @@ def nsorted(l):
     convert = lambda text: int(text) if text.isdigit() else text
     key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
     return sorted(l, key=key)
+
+def generate_validation_token():
+    form_token = hex(random.randint(0, 0xFFFFFFFF))[2:]
+    expires = datetime.datetime.now() + datetime.timedelta(minutes=5)
+    expires_rfc822 = expires.strftime('%a %d %b %Y %H:%M:%S GMT')
+    cookie = "token=%s;expires=%s;path=/" % (form_token, expires_rfc822)
+    return form_token, cookie
 
 class Completed(db.Model):
     email = db.StringProperty(required=True)
@@ -132,6 +152,9 @@ class EvalInvite(db.Model):
 
 class Eval(db.Model):
     ta = db.StringProperty(required=True)
+    ta_email = db.StringProperty()
+    prof_email = db.StringProperty()
+    sent_results = db.BooleanProperty()
     course = db.StringProperty(required=True)
     responses = db.BlobProperty(required=True)
 
@@ -188,7 +211,7 @@ class Eval(db.Model):
         return s
 
     @staticmethod
-    def generate_summary(evals):
+    def generate_summary(evals, skip=False):
         wrapper = textwrap.TextWrapper(width=79)
         responses = evals[0].get_responses()
         for eval in evals[1:]:
@@ -201,6 +224,8 @@ class Eval(db.Model):
                     responses[q_num].extend(tmp[q_num])
         s = ''
         for q_num, (question, q_type) in enumerate(QUESTIONS):
+            if skip and q_type == 2:
+                continue
             wrapper.initial_indent = wrapper.subsequent_indent = ' ' * 8
             s += '    %2d. %s\n' % (q_num+1, wrapper.fill(question)[8:])
             wrapper.initial_indent = wrapper.subsequent_indent = ' ' * 11
@@ -326,6 +351,7 @@ class EvalPage(webapp.RequestHandler):
 class AdminStatPage(webapp.RequestHandler):
     def get(self, course=None, ta=None):
         evals = []
+        key_name = None
         if ta != None:
             ta = urllib.unquote(ta)
             course = urllib.unquote(course)
@@ -347,7 +373,7 @@ class AdminStatPage(webapp.RequestHandler):
         if not evals:
             return self.redirect('/admin')
 
-        results = Eval.generate_summary(evals)
+        results = Eval.generate_summary(evals, len(evals) > 1)
 
         if self.request.get('dl') == '1':
             cd = CD_ATTACHMENT % '%s.txt' % title.replace(' ', '_')
@@ -355,10 +381,15 @@ class AdminStatPage(webapp.RequestHandler):
             self.response.headers['Content-Disposition'] = cd
             self.response.out.write(results)
         else:
+            form_token, cookie = generate_validation_token()
+            self.response.headers.add_header("Set-Cookie", cookie)
+
             path = os.path.join(VIEW_PATH, 'results.html')
             dl_url = '%s?dl=1' % self.request.url
+            email_url = '%s?email=1' % self.request.url
             template_values = {'results':cgi.escape(results), 'title':title,
-                               'dl_url':dl_url}
+                               'dl_url':dl_url, 'email_url':email_url,
+                               'form_token':form_token, 'key':key_name}
             self.response.out.write(template.render(path, template_values))
 
 
@@ -451,21 +482,28 @@ class AdminPage(webapp.RequestHandler):
                 if ta in courses[ei.course]:
                     courses[ei.course][ta].remaining += 1
                 else:
-                    courses[ei.course][ta] = Dummy(remaining=1, completed=0)
+                    courses[ei.course][ta] = Dummy(remaining=1, completed=0,
+                                                   ta_email=None,
+                                                   prof_email=None,
+                                                   sent_results=None)
 
         # Completed Evaluations
         for e in Eval.all():
             completed = sum(e.get_responses()[0])
             if e.ta in courses[e.course]:
                 courses[e.course][e.ta].completed = completed
+                courses[e.course][e.ta].ta_email = e.ta_email
+                courses[e.course][e.ta].prof_email = e.prof_email
+                courses[e.course][e.ta].sent_results = e.sent_results
             else:
                 courses[e.course][e.ta] = Dummy(completed=completed,
-                                                remaining=0)
+                                                remaining=0,
+                                                ta_email=e.ta_email,
+                                                prof_email=e.prof_email,
+                                                sent_results=e.sent_results)
 
-        form_token = hex(random.randint(0, 0xFFFFFFFF))[2:]
-        expires = datetime.datetime.now() + datetime.timedelta(minutes=5)
-        expires_rfc822 = expires.strftime('%a %d %b %Y %H:%M:%S GMT')
-        cookie = "token=%s;expires=%s;path=/" % (form_token, expires_rfc822)
+        form_token, cookie = generate_validation_token()
+        self.response.headers.add_header("Set-Cookie", cookie)
 
         # Make more user friendly
         if warnings:
@@ -479,7 +517,6 @@ class AdminPage(webapp.RequestHandler):
                            'admin':users.get_current_user(),
                            'form_token':form_token, 'eval_time':EVAL_TIME}
         path = os.path.join(VIEW_PATH, 'admin.html')
-        self.response.headers.add_header("Set-Cookie", cookie)
         self.response.out.write(template.render(path, template_values))
 
     def post(self):
@@ -496,12 +533,60 @@ class AdminPage(webapp.RequestHandler):
             self.upload_csv()
         elif action == 'reset':
             self.reset()
+        elif action == 'tamapping':
+            self.update_ta_mappings()
+        elif action == 'professor':
+            self.update_professor_emails()
+        elif action == 'email_result':
+            self.email_result()
         else:
             self.get(errors=['Invalid action: %s' % action])
 
     def form_token_match(self):
         return 'token' in self.request.cookies and \
             self.request.cookies['token'] == self.request.get('token')
+
+    def email_result(self):
+        key_name = self.request.get('key')
+        obj = Eval.get_by_key_name(key_name)
+        if not obj:
+            return self.get(errors=['Invalid key: "%s"' % key_name])
+
+        errors = []
+        if not obj.ta_email:
+            errors.append('No TA email set')
+        if not obj.prof_email:
+            errors.append('No prof email set')
+        if obj.sent_results:
+            errors.append('Results already emailed')
+        if errors:
+            return self.get(errors=errors)
+
+        ta_result_name = '%s-%s.txt' % (obj.course, obj.ta.replace(' ', '_'))
+        ta_result = Eval.generate_summary([obj])
+
+        course_list = [x for x in Eval.all().filter('course =', obj.course)]
+        course_result = Eval.generate_summary(course_list, True)
+        all_result = Eval.generate_summary([x for x in Eval.all()], True)
+
+        user = users.get_current_user()
+        email_from = '%s <%s>' % (user.nickname(), user.email())
+        email_to = '%s <%s>' % (obj.ta, obj.ta_email)
+        email_cc = obj.prof_email
+        body = RESULT_EMAIL_TEMPLATE % (obj.ta, user.nickname())
+        attachments = [(ta_result_name, ta_result),
+                       ('%s.txt' % obj.course, course_result),
+                       ('all.txt', all_result)]
+
+        try:
+            mail.send_mail(sender=email_from, subject=RESULT_EMAIL_SUBJECT,
+                           to=email_to, cc=email_cc, body=body,
+                           attachments=attachments)
+            obj.sent_results = True
+            obj.put()
+            self.get(['Sent result to %s and %s' % (email_to, email_cc)])
+        except Exception, e:
+            self.get(errors=[str(e)])
 
     def setup_email_invites(self):
         if self.request.get('name') == '':
@@ -515,6 +600,30 @@ class AdminPage(webapp.RequestHandler):
                                                   'nickname':nickname})
         self.get(['Emails queued'])
 
+    def update_ta_mappings(self):
+        errors = set()
+        body = self.request.get('tas')
+        for line in [x.strip() for x in body.split('\n') if x != '']:
+            name, email = [x.strip() for x in line.split(',') if x != '']
+            if not TA_NAME_RE.match(name):
+                errors.add('Invalid TA name: %s' % name)
+                continue
+            for e in Eval.all().filter('ta =', name):
+                e.ta_email = email
+                e.put()
+
+        self.get(['Updated TA Mappings'], errors=errors)
+
+    def update_professor_emails(self):
+        errors = set()
+        prof_file = self.request.get('professor')
+        mappings = self._process_course_csv(prof_file, errors, 'Prof',
+                                            EMAIL_RE)
+        for course in mappings:
+            for e in Eval.all().filter('course =', course):
+                e.prof_email = mappings[course][0]
+                e.put()
+        self.get(['Updated professor emails'], errors=errors)
         
     def upload_csv(self):
         tas = self.request.get('tas')
@@ -529,15 +638,13 @@ class AdminPage(webapp.RequestHandler):
         if tas == '':
             errors.add('No TA file submitted.')
         else:
-            course_tas, errors = self._process_csv(tas, errors, 'TA',
-                                                   TA_NAME_RE)
+            course_tas = self._process_csv(tas, errors, 'TA', TA_NAME_RE)
 
         if students == '':
             errors.add('No student file submitted.')
         else:
-            course_students, errors = self._process_csv(students, errors,
-                                                        'student',
-                                                        STUDENT_EMAIL_RE)
+            course_students = self._process_csv(students, errors, 'student',
+                                                EMAIL_RE)
 
         s_tas = set(course_tas)
         s_students = set(course_students)
@@ -570,7 +677,7 @@ class AdminPage(webapp.RequestHandler):
             self.get(successes=['Reset Database'])
 
     @staticmethod
-    def _process_csv(body, errors, descriptor, validator=None):
+    def _process_course_csv(body, errors, descriptor, validator=None):
         to_return = {}
         for line in [x.strip() for x in body.split('\n') if x != '']:
             split = [x.strip() for x in line.split(',') if x != '']
@@ -586,16 +693,20 @@ class AdminPage(webapp.RequestHandler):
                 continue
 
             if validator:
+                valid = True
                 for name in names:
                     if not validator.match(name):
                         errors.add('Invalid %s %s' % (descriptor, name))
+                        valid = False
+                if not valid:
+                    continue
 
             if course in to_return:
                 errors.add('Duplicate course listing in %s file: %s' %
                            (descriptor, course))
             else:
                 to_return[course] = names
-        return to_return, errors
+        return to_return
 
 
 class ErrorPage(webapp.RequestHandler):

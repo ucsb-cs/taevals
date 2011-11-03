@@ -3,8 +3,15 @@
 {% block title %}{{ title }} Results{% endblock %}
 
 {% block content %}
-<p><a href="/admin">Back to Admin</a> |
-  <a href="{{ dl_url }}">Download result</a></p>
+<form action="/admin" id="eresults" method="post">
+  <input type="hidden" name="action" value="email_result" />
+  <input type="hidden" name="key" value="{{ key }}" />
+  <input type="hidden" name="token" value="{{ form_token }}" />
+  <p><a href="/admin">Back to Admin</a> |
+    <a href="{{ dl_url }}">Download result</a>{% if key %} |
+    <a href="javascript: document.forms['eresults'].submit()">Email results</a>
+  {% endif %}</p>
+</form>
 
 <h3>{{ title }} Results</h3>
 <pre>

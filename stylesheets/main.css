@@ -69,3 +69,7 @@ body {
 .success {
     color: #00F;
 }
+
+.tiny {
+    font-size: 0.5em;
+}

@@ -39,7 +39,17 @@
       <ol>
 	{% for ta in course.1 %}
 	  <li><a href="/admin/s/{{ course.0 }}/{{ ta.0 }}">{{ ta.0 }}</a>:
-	    {{ ta.1.completed }} completed, {{ ta.1.remaining }} remaining</li>
+	    {{ ta.1.completed }} completed, {{ ta.1.remaining }} remaining
+	    {% if not ta.1.ta_email %}
+	    <span class="tiny error"> (no TA email)</span>
+	    {% endif %}
+	    {% if not ta.1.prof_email %}
+	    <span class="tiny error"> (no prof email)</span>
+	    {% endif %}
+	    {% if not ta.1.sent_results %}
+	    <span class="tiny error"> (results not sent)</span>
+	    {% endif %}
+	  </li>
 	{% endfor %}
       </ol>
     </li>
@@ -59,8 +69,24 @@
     <div>
       Type 0xDEADBEEF to confirm: <input type="text" name="confirm" />
       <input type="hidden" name="action" value="reset" />
-    <input type="hidden" name="token" value="{{ form_token }}" />
+      <input type="hidden" name="token" value="{{ form_token }}" />
       <input type="submit" value="Reset Database" />
+    </div>
+  </form>
+  <form action="/admin" method="post" enctype="multipart/form-data">
+    <div>
+      <input type="hidden" name="action" value="tamapping" />
+      <input type="hidden" name="token" value="{{ form_token }}" />
+      TA Mapping File: <input type="file" name="tas" />
+      <input type="submit" value="Upload TA Mapping" />
+    </div>
+  </form>
+  <form action="/admin" method="post" enctype="multipart/form-data">
+    <div>
+      <input type="hidden" name="action" value="professor" />
+      <input type="hidden" name="token" value="{{ form_token }}" />
+      Professor File: <input type="file" name="professor" />
+      <input type="submit" value="Upload Professor" />
     </div>
   </form>
   <p><a href="/admin/dl">Download all results</a></p>
