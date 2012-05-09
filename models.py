@@ -8,50 +8,9 @@ import const
 import helpers
 
 
-class Settings(db.Model):
-    admin_email = db.StringProperty(required=True)
-    expire_date = db.DateTimeProperty(required=True)
-    send_completed_email = db.BooleanProperty(default=False)
-
-
 class Completed(db.Model):
     name = db.StringProperty(required=True)
     email = db.StringProperty(required=True)
-
-
-class EvalInvite(db.Model):
-    course = db.StringProperty(required=True)
-    email = db.StringProperty(required=True)
-    email_sent = db.DateTimeProperty()
-    name = db.StringProperty(required=True)
-    tas = db.StringListProperty(required=True)
-
-    @staticmethod
-    def create(course, student, tas):
-        cur = None, None
-        while cur != (student['email'], course):
-            key_name = hex(random.randint(0, 0xFFFFFFFF))[2:]
-            tmp = EvalInvite.get_or_insert(key_name, course=course,
-                                           email=student['email'],
-                                           name=student['name'], tas=tas)
-            cur = tmp.email, tmp.course
-        return tmp
-
-    @property
-    def url(self):
-        return 'https://{}/eval/{}'.format(os.environ['HTTP_HOST'],
-                                           self.key().name())
-
-    def __lt__(self, other):
-        return self.course == helpers.nsorted((self.course, other.course))[0]
-
-    def remaining_evals(self):
-        query = EvalInvite.all()
-        query.filter('__key__ !=', self.key())
-        query.filter('email', self.email)
-        remaining = []
-        [remaining.append(invite) for invite in query if len(invite.tas)]
-        return sorted(remaining)
 
 
 class Eval(db.Model):
@@ -63,21 +22,15 @@ class Eval(db.Model):
     ta = db.StringProperty(required=True)
     ta_email = db.StringProperty(required=True)
 
-    def get_responses(self):
-        return json.loads(self.responses)
-
-    def update_response_list(self, responses):
-        current = json.loads(self.responses)
-        for i, (_, q_type) in enumerate(const.QUESTIONS):
-            response = responses[i].strip()
-            if not response:
-                continue
-
+    @staticmethod
+    def _construct_response_list():
+        responses = []
+        for _, q_type in const.QUESTIONS:
             if q_type in [0, 1]:
-                current[i][int(response)] += 1
+                responses.append([0, 0, 0, 0, 0, 0])
             else:
-                current[i].append(response)
-        self.responses = json.dumps(current)
+                responses.append([])
+        return json.dumps(responses)
 
     @staticmethod
     def create(course, ta, instructor):
@@ -88,13 +41,6 @@ class Eval(db.Model):
                    instructor_email=instructor['email'],
                    responses=response_list,
                    ta=ta['name'], ta_email=ta['email'])
-        obj.put()
-
-    @staticmethod
-    def update(course, ta, responses):
-        key_name = '{}-{}'.format(ta, course)
-        obj = Eval.get_by_key_name(key_name)
-        obj.update_response_list(responses)
         obj.put()
 
     @staticmethod
@@ -155,11 +101,64 @@ class Eval(db.Model):
         return s
 
     @staticmethod
-    def _construct_response_list():
-        responses = []
-        for _, q_type in const.QUESTIONS:
+    def update(course, ta, responses):
+        key_name = '{}-{}'.format(ta, course)
+        obj = Eval.get_by_key_name(key_name)
+        obj.update_response_list(responses)
+        obj.put()
+
+    def get_responses(self):
+        return json.loads(self.responses)
+
+    def update_response_list(self, responses):
+        current = json.loads(self.responses)
+        for i, (_, q_type) in enumerate(const.QUESTIONS):
+            response = responses[i].strip()
+            if not response:
+                continue
+
             if q_type in [0, 1]:
-                responses.append([0, 0, 0, 0, 0, 0])
+                current[i][int(response)] += 1
             else:
-                responses.append([])
-        return json.dumps(responses)
+                current[i].append(response)
+        self.responses = json.dumps(current)
+
+
+class EvalInvite(db.Model):
+    course = db.StringProperty(required=True)
+    email = db.StringProperty(required=True)
+    email_sent = db.DateTimeProperty()
+    name = db.StringProperty(required=True)
+    tas = db.StringListProperty(required=True)
+
+    @property
+    def url(self):
+        return 'https://{}/eval/{}'.format(os.environ['HTTP_HOST'],
+                                           self.key().name())
+    @staticmethod
+    def create(course, student, tas):
+        cur = None, None
+        while cur != (student['email'], course):
+            key_name = hex(random.randint(0, 0xFFFFFFFF))[2:]
+            tmp = EvalInvite.get_or_insert(key_name, course=course,
+                                           email=student['email'],
+                                           name=student['name'], tas=tas)
+            cur = tmp.email, tmp.course
+        return tmp
+
+    def __lt__(self, other):
+        return self.course == helpers.nsorted((self.course, other.course))[0]
+
+    def remaining_evals(self):
+        query = EvalInvite.all()
+        query.filter('__key__ !=', self.key())
+        query.filter('email', self.email)
+        remaining = []
+        [remaining.append(invite) for invite in query if len(invite.tas)]
+        return sorted(remaining)
+
+
+class Settings(db.Model):
+    admin_email = db.StringProperty(required=True)
+    expire_date = db.DateTimeProperty(required=True)
+    send_completed_email = db.BooleanProperty(default=False)

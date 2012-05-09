@@ -9,7 +9,7 @@ admin_console:
   - name: TA Evals Admin Page
     url: /admin
 
-builtins:
+#builtins:
 #- appstats: on
 #- remote_api: on
 

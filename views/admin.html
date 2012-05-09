@@ -4,8 +4,7 @@
 
 {% block content %}
 
-<div id="email"><p>{{ admin.email }}</p></div>
-<div id="email"><p>Eval Time Remaining: {{ eval_time }}</p></div>
+<div id="email"><p>Remaining time: {{ eval_time }}</p></div>
 
 {% for error in errors %}
   <div class="error">Error: {{ error }}</div>
@@ -33,7 +32,7 @@
     </div>
   </form>
 {% else %}
-  <h1>Statistics</h1>
+  <h1><a href="/admin">Statistics</a></h1>
   <div><a href="/admin/all">All</a></div>
   <ol>
   {% for course in courses %}
@@ -54,10 +53,9 @@
   <hr/>
   <form action="/admin" method="post">
     <div>
-      <input type="hidden" name="action" value="email" />
+      <input type="hidden" name="action" value="email_json" />
       <input type="hidden" name="token" value="{{ form_token }}" />
-      <input type="submit" value="Email Invites" />
-      (Emails are sent from your email address)
+      <input type="submit" value="Download Email Json" />
     </div>
   </form>
   <form action="/admin" method="post">
