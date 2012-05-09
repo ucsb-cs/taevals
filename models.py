@@ -135,6 +135,7 @@ class EvalInvite(db.Model):
     def url(self):
         return 'https://{}/eval/{}'.format(os.environ['HTTP_HOST'],
                                            self.key().name())
+
     @staticmethod
     def create(course, student, tas):
         cur = None, None

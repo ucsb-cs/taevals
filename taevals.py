@@ -107,7 +107,7 @@ class AdminPage(webapp2.RequestHandler):
             self.get(errors=['Invalid action: {}'.format(action)])
 
     def download_email_json(self):
-        data = {'template': const.EMAIL_TEMPLATE, 'emails':[]}
+        data = {'template': const.EMAIL_TEMPLATE, 'emails': []}
         now = datetime.datetime.now()
         for invites, output in helpers.invite_iterator():
             name = invites[0].name
@@ -151,7 +151,7 @@ class AdminPage(webapp2.RequestHandler):
                        ('all.txt', all_result)]
 
         try:
-            mail.send_mail(sender=settings.admin_email,to=email_to,
+            mail.send_mail(sender=settings.admin_email, to=email_to,
                            cc=email_cc, subject=const.RESULT_EMAIL_SUBJECT,
                            body=body, attachments=attachments)
             obj.sent_results = True
