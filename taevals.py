@@ -6,8 +6,6 @@ import json
 import logging
 import math
 import os
-import random
-import re
 import tarfile
 import time
 import urllib
@@ -17,6 +15,7 @@ from google.appengine.ext import db
 from google.appengine.runtime import apiproxy_errors, DeadlineExceededError
 
 import const
+import helpers
 from models import Completed, Eval, EvalInvite, Settings
 
 jinja_environment = jinja2.Environment(loader=jinja2.FileSystemLoader(
@@ -28,18 +27,6 @@ jinja_environment = jinja2.Environment(loader=jinja2.FileSystemLoader(
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
 MAX_DELETES = 250
 
-def nsorted(l):
-    convert = lambda text: int(text) if text.isdigit() else text
-    key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
-    return sorted(l, key=key)
-
-def generate_validation_token():
-    form_token = hex(random.randint(0, 0xFFFFFFFF))[2:]
-    expires = datetime.datetime.now() + datetime.timedelta(minutes=5)
-    expires_rfc822 = expires.strftime('%a %d %b %Y %H:%M:%S GMT')
-    cookie = "token=%s;expires=%s;path=/" % (form_token, expires_rfc822)
-    return form_token, cookie
-
 
 class HomePage(webapp2.RequestHandler):
     def get(self):
@@ -50,41 +37,41 @@ class HomePage(webapp2.RequestHandler):
 class EvalPage(webapp2.RequestHandler):
     def get(self, key, ta='', responses=None, success=None, errors=None):
         invite = EvalInvite.get_by_key_name(key)
-        if invite:
-            remaining = invite.remaining_evals()
-            if not remaining and not invite.tas:
-                if not Completed.all().filter('email', invite.email).fetch(1):
-                    body = const.COMPLETED_EMAIL_TEMPLATE.format(
-                        invite.email_from_nick)
-                    try:
-                        mail.send_mail(invite.email_from, invite.email,
-                                       const.COMPLETED_EMAIL_SUBJECT, body)
-                    except apiproxy_errors.OverQuotaError, message:
-                        logging.error(message)
-                    a = Completed(email=invite.email)
-                    a.put()
+        if not invite:
+            return self.redirect('/')
 
-            settings = Settings.get_by_key_name('settings')
-            invite.expired = datetime.datetime.now() > settings.expire_date
+        settings = Settings.get_by_key_name('settings')
+        invite.expired = datetime.datetime.now() > settings.expire_date
+        success = success or []
+        errors = errors or []
 
+        remaining = invite.remaining_evals()
+        if not remaining and not invite.tas:
+            if settings.send_completed_email:
+                body = const.COMPLETED_EMAIL_TEMPLATE.format(invite.name)
+                try:
+                    mail.send_mail(settings.admin_email, invite.email,
+                                   const.COMPLETED_EMAIL_SUBJECT, body)
+                except apiproxy_errors.OverQuotaError as message:
+                    logging.error(message)
+            completed = Completed(name=invite.name, email=invite.email)
+            completed.put()
+            invite.delete()
+            questions = None
+        else:
             if not responses:
                 responses = [''] * len(const.QUESTIONS)
             questions = zip(const.QUESTIONS, responses)
 
-
-            success = success or []
-            errors = errors or []
-
-            values = {'invite':invite, 'success':success, 'errors':errors,
-                      'sel_ta':ta, 'questions':questions, 'remaining':remaining}
-            template = jinja_environment.get_template('eval.html')
-            self.response.out.write(template.render(values))
-        else:
-            self.redirect('/')
+        values = {'invite': invite, 'success': success, 'errors': errors,
+                  'sel_ta': ta, 'questions': questions, 'remaining': remaining}
+        template = jinja_environment.get_template('eval.html')
+        self.response.out.write(template.render(values))
 
     def post(self, key):
         invite = EvalInvite.get_by_key_name(key)
-        if not invite: return self.redirect('/')
+        if not invite:
+            return self.redirect('/')
 
         settings = Settings.get_by_key_name('settings')
         if datetime.datetime.now() > settings.expire_date:
@@ -95,7 +82,7 @@ class EvalPage(webapp2.RequestHandler):
             return self.get(key, errors=('Must select a TA to evaluate',))
 
         if self.request.get('not_applicable'):
-            success = 'Not Applicable: %s' % ta
+            success = 'Not Applicable: {}'.format(ta)
         else:
             errors = []
             responses = self.get_responses()
@@ -107,17 +94,18 @@ class EvalPage(webapp2.RequestHandler):
                 if const.QUESTIONS[i][1] in [0, 1]:
                     if responses[i] not in ['0', '1', '2', '3', '4', '5']:
                         responses[i] = ''
-                        errors.append('Must provide an answer for "%s"' %
-                                      const.QUESTIONS[i][0])
+                        errors.append('Must provide an answer for {!r}'.format(
+                                const.QUESTIONS[i][0]))
             if errors:
                 return self.get(key, ta, responses, errors=errors)
 
             try:
-                db.run_in_transaction(Eval.update, invite.course, ta, responses)
-            except apiproxy_errors.RequestTooLargeError, message:
+                db.run_in_transaction(Eval.update, invite.course, ta,
+                                      responses)
+            except apiproxy_errors.RequestTooLargeError:
                 return self.get(key, ta, responses,
                                 errors=('Your response is too long',))
-            success = 'Evaluated: %s' % ta
+            success = 'Evaluated: {}'.format(ta)
 
         # Remove TA from list of TAs student can evaluate
         invite.tas.remove(ta)
@@ -127,16 +115,14 @@ class EvalPage(webapp2.RequestHandler):
     def get_responses(self):
         args = self.request.arguments()
         resp_args = [int(x[4:]) - 1 for x in args if x.startswith('resp')]
-
         responses = []
         count = 0
         for resp_num in sorted(resp_args):
             while count < resp_num:
                 responses.append('')
                 count += 1
-            responses.append(self.request.get('resp%d' % (resp_num + 1)))
+            responses.append(self.request.get('resp{}'.format((resp_num + 1))))
             count += 1
-
         return responses
 
 
@@ -147,13 +133,14 @@ class AdminStatPage(webapp2.RequestHandler):
         if ta != None:
             ta = urllib.unquote(ta)
             course = urllib.unquote(course)
-            if course == None: return self.redirect('/admin')
-            key_name = '%s-%s' % (ta, course)
+            if course == None:
+                return self.redirect('/admin')
+            key_name = '{}-{}'.format(ta, course)
             obj = Eval.get_by_key_name(key_name)
             if obj == None:
                 return self.redirect('/admin')
             evals.append(obj)
-            title = '%s-%s' % (course, ta)
+            title = '{}-{}'.format(course, ta)
         elif course != None:
             course = urllib.unquote(course)
             evals.extend([x for x in Eval.all().filter('course =', course)])
@@ -174,14 +161,14 @@ class AdminStatPage(webapp2.RequestHandler):
             self.response.headers['Content-Disposition'] = cd
             self.response.out.write(results)
         else:
-            form_token, cookie = generate_validation_token()
-            self.response.headers.add_header("Set-Cookie", cookie)
+            form_token, cookie = helpers.generate_validation_token()
+            self.response.headers.add_header('Set-Cookie', cookie)
 
             dl_url = '{}?dl=1'.format(self.request.url)
             email_url = '{}?email=1'.format(self.request.url)
-            values = {'results':cgi.escape(results), 'title':title,
-                      'dl_url':dl_url, 'email_url':email_url,
-                      'form_token':form_token, 'key':key_name}
+            values = {'results': cgi.escape(results), 'title': title,
+                      'dl_url': dl_url, 'email_url': email_url,
+                      'form_token': form_token, 'key': key_name}
             template = jinja_environment.get_template('results.html')
             self.response.out.write(template.render(values))
 
@@ -240,11 +227,7 @@ class InitWorker(webapp2.RequestHandler):
 
 class EmailWorker(webapp2.RequestHandler):
     def post(self):
-        email_from = self.request.get('from').strip()
-        nickname = self.request.get('nickname').strip()
-        if email_from == '' or nickname == '':
-            return self.response.set_status(400)
-
+        settings = Settings.get_by_key_name('settings')
         students = {}
         for invite in EvalInvite.all():
             if not invite.tas or invite.email_sent:
@@ -259,18 +242,17 @@ class EmailWorker(webapp2.RequestHandler):
                                              ', '.join(sorted(invite.tas)),
                                              invite.url)
             try:
-                mail.send_mail(email_from, email, const.EMAIL_SUBJECT,
+                mail.send_mail(settings.admin_email, email,
+                               const.EMAIL_SUBJECT,
                                const.EMAIL_TEMPLATE.format(student=invite.name,
-                                                           body=output,
-                                                           sender=nickname))
+                                                           body=output))
+                now = datetime.datetime.now()
                 for invite in invites:
-                    invite.email_sent = datetime.datetime.now()
+                    invite.email_sent = now
                     invite.put()
-            except apiproxy_errors.OverQuotaError, message:
-                taskqueue.add(url='/admin/email', countdown=60,
-                              params={'from': email_from, 'nickname': nickname})
+            except apiproxy_errors.OverQuotaError:
+                taskqueue.add(url='/admin/email', countdown=60)
                 return self.response.set_status(200)
-            break
 
 
 class AdminPage(webapp2.RequestHandler):
@@ -286,38 +268,46 @@ class AdminPage(webapp2.RequestHandler):
                 if ta in courses[invite.course]:
                     courses[invite.course][ta].remaining += 1
                 else:
-                    courses[invite.course][ta] = Dummy(remaining=1, completed=0,
-                                                   sent_results=None)
+                    courses[invite.course][ta] = helpers.Dummy(
+                        remaining=1, completed=0, sent_results=None)
 
         # Completed Evaluations
-        for e in Eval.all():
-            completed = sum(e.get_responses()[0])
-            if e.ta in courses[e.course]:
-                courses[e.course][e.ta].completed = completed
-                courses[e.course][e.ta].sent_results = e.sent_results
+        for evaluation in Eval.all():
+            completed = sum(evaluation.get_responses()[0])
+            tas = courses[evaluation.course]
+            if evaluation.ta in tas:
+                tas[evaluation.ta].completed = completed
+                tas[evaluation.ta].sent_results = evaluation.sent_results
             else:
-                courses[e.course][e.ta] = Dummy(completed=completed,
-                                                remaining=0,
-                                                sent_results=e.sent_results)
+                tas[evaluation.ta] = helpers.Dummy(
+                    completed=completed, remaining=0,
+                    sent_results=evaluation.sent_results)
 
-        form_token, cookie = generate_validation_token()
-        self.response.headers.add_header("Set-Cookie", cookie)
+        form_token, cookie = helpers.generate_validation_token()
+        self.response.headers.add_header('Set-Cookie', cookie)
 
-        successes = nsorted(successes) if successes else []
-        warnings = nsorted(warnings) if warnings else []
-        errors = nsorted(errors) if errors else []
-        courses = [(x, sorted(courses[x].items())) for x in nsorted(courses)]
+        successes = helpers.nsorted(successes) if successes else []
+        warnings = helpers.nsorted(warnings) if warnings else []
+        errors = helpers.nsorted(errors) if errors else []
+        courses = [(x, sorted(courses[x].items())) for x in
+                   helpers.nsorted(courses)]
 
+        # Initialize settings if not already set
+        user = users.get_current_user()
+        admin_email = 'Computer Science Lead TA <{}>'.format(user.email())
         now = datetime.datetime.now()
-        settings = Settings.get_or_insert('settings', expire_date=now)
+        expire_date = now + datetime.timedelta(days=5)
+        settings = Settings.get_or_insert('settings', admin_email=admin_email,
+                                          expire_date=expire_date)
         if settings.expire_date < now:
             remaining_time = str(datetime.timedelta())
         else:
             remaining_time = str(settings.expire_date - now)
 
-        values = {'successes':successes, 'warnings':warnings, 'errors':errors,
-                  'courses':courses, 'admin':users.get_current_user(),
-                  'form_token':form_token, 'eval_time':remaining_time}
+        values = {'successes': successes, 'warnings': warnings,
+                  'errors': errors, 'courses': courses,
+                  'admin': users.get_current_user(), 'form_token': form_token,
+                  'eval_time': remaining_time}
         template = jinja_environment.get_template('admin.html')
         self.response.out.write(template.render(values))
 
@@ -340,7 +330,7 @@ class AdminPage(webapp2.RequestHandler):
         elif action == 'upload':
             self.upload_json()
         else:
-            self.get(errors=['Invalid action: %s' % action])
+            self.get(errors=['Invalid action: {}'.format(action)])
 
     def form_token_match(self):
         return ('token' in self.request.cookies and
@@ -350,48 +340,39 @@ class AdminPage(webapp2.RequestHandler):
         key_name = self.request.get('key')
         obj = Eval.get_by_key_name(key_name)
         if not obj:
-            return self.get(errors=['Invalid key: "%s"' % key_name])
+            return self.get(errors=['Invalid key: {!r}'.format(key_name)])
 
         if obj.sent_results:
             return self.get(errors=['Results already emailed.'])
 
-        ta_result_name = '%s-%s.txt' % (obj.course, obj.ta.replace(' ', '_'))
+        safe_ta_name = obj.ta.replace(' ', '_')
+        ta_result_name = '{}-{}.txt'.format(obj.course, safe_ta_name)
         ta_result = Eval.generate_summary([obj])
 
         course_list = [x for x in Eval.all().filter('course =', obj.course)]
         course_result = Eval.generate_summary(course_list, True)
         all_result = Eval.generate_summary([x for x in Eval.all()], True)
 
-        user = users.get_current_user()
-        email_from = '%s <%s>' % (user.nickname(), user.email())
-        email_to = '%s <%s>' % (obj.ta, obj.ta_email)
-        email_cc = obj.prof_email
-        body = const.RESULT_EMAIL_TEMPLATE % (obj.ta, user.nickname())
+        settings = Settings.get_by_key_name('settings')
+        email_to = '{} <{}>'.format(obj.ta, obj.ta_email)
+        email_cc = '{} <{}>'.format(obj.instructor, obj.instructor_email)
+        body = const.RESULT_EMAIL_TEMPLATE.format(obj.ta)
         attachments = [(ta_result_name, ta_result),
-                       ('%s.txt' % obj.course, course_result),
+                       ('{}.txt'.format(obj.course), course_result),
                        ('all.txt', all_result)]
 
         try:
-            mail.send_mail(sender=email_from,
-                           subject=const.RESULT_EMAIL_SUBJECT,
-                           to=email_to, cc=email_cc, body=body,
-                           attachments=attachments)
+            mail.send_mail(sender=settings.admin_email,
+                           subject=const.RESULT_EMAIL_SUBJECT, to=email_to,
+                           cc=email_cc, body=body, attachments=attachments)
             obj.sent_results = True
             obj.put()
-            self.get(['Sent result to %s and %s' % (email_to, email_cc)])
+            self.get(['Sent result to {} and {}'.format(email_to, email_cc)])
         except Exception, e:
             self.get(errors=[str(e)])
 
     def setup_email_invites(self):
-        nickname = self.request.get('name')
-        if not nickname:
-            return self.get(errors=['Form name cannot be blank'])
-
-        user = users.get_current_user()
-        email_from = '%s <%s>' % (nickname, user.email())
-
-        taskqueue.add(url='/admin/email', params={'from':email_from,
-                                                  'nickname':nickname})
+        taskqueue.add(url='/admin/email')
         self.get(['Emails queued'])
 
     def update_expire_date(self):
@@ -457,15 +438,10 @@ class AdminPage(webapp2.RequestHandler):
                 db.delete(keys[i * MAX_DELETES:(i + 1) * MAX_DELETES])
             self.get(successes=['Reset Database'])
 
+
 class ErrorPage(webapp2.RequestHandler):
     def get(self):
         self.redirect('/', permanent=True)
-
-
-class Dummy(object):
-    def __init__(self, *args, **kwargs):
-        for k, v in kwargs.items():
-            self.__dict__[k] = v
 
 
 app = webapp2.WSGIApplication([('/', HomePage),

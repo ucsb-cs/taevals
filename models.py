@@ -1,18 +1,23 @@
 import json
-import logging
 import os
 import random
 import textwrap
 from google.appengine.ext import db
 
 import const
+import helpers
 
 
 class Settings(db.Model):
+    admin_email = db.StringProperty(required=True)
     expire_date = db.DateTimeProperty(required=True)
+    send_completed_email = db.BooleanProperty(default=False)
+
 
 class Completed(db.Model):
+    name = db.StringProperty(required=True)
     email = db.StringProperty(required=True)
+
 
 class EvalInvite(db.Model):
     course = db.StringProperty(required=True)
@@ -38,17 +43,16 @@ class EvalInvite(db.Model):
                                            self.key().name())
 
     def __lt__(self, other):
-        return self.course == nsorted((self.course, other.course))[0]
+        return self.course == helpers.nsorted((self.course, other.course))[0]
 
     def remaining_evals(self):
         query = EvalInvite.all()
         query.filter('__key__ !=', self.key())
         query.filter('email', self.email)
         remaining = []
-        for ei in query:
-            if len(ei.tas):
-                remaining.append(ei)
+        [remaining.append(invite) for invite in query if len(invite.tas)]
         return sorted(remaining)
+
 
 class Eval(db.Model):
     course = db.StringProperty(required=True)
@@ -66,7 +70,8 @@ class Eval(db.Model):
         current = json.loads(self.responses)
         for i, (_, q_type) in enumerate(const.QUESTIONS):
             response = responses[i].strip()
-            if not response: continue
+            if not response:
+                continue
 
             if q_type in [0, 1]:
                 current[i][int(response)] += 1
@@ -101,7 +106,7 @@ class Eval(db.Model):
         for i, count in enumerate(values[1:]):
             if count:
                 s += '%3.0f%% ' % (count * 100. / responded)
-                tmp.extend([i+1 for _ in range(count)])
+                tmp.extend([i + 1 for _ in range(count)])
             else:
                 s += ' ' * 5
 
@@ -134,7 +139,7 @@ class Eval(db.Model):
             if skip and q_type == 2:
                 continue
             wrapper.initial_indent = wrapper.subsequent_indent = ' ' * 8
-            s += '    %2d. %s\n' % (q_num+1, wrapper.fill(question)[8:])
+            s += '    %2d. %s\n' % (q_num + 1, wrapper.fill(question)[8:])
             wrapper.initial_indent = wrapper.subsequent_indent = ' ' * 11
             if q_type in [0, 1]:
                 s += '        {}\n'.format(const.Q_KEY[q_type])
@@ -145,7 +150,7 @@ class Eval(db.Model):
                     tmp = ''
                     for block in res.split('\n'):
                         tmp += '{}\n'.format(wrapper.fill(block))
-                    s += '%5s %3d. %s' % (' ', i+1, tmp[11:])
+                    s += '%5s %3d. %s' % (' ', i + 1, tmp[11:])
                 s += '\n'
         return s
 

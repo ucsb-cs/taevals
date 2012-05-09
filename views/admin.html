@@ -53,10 +53,9 @@
   </ol>
   <hr/>
   <form action="/admin" method="post">
-    <input type="hidden" name="action" value="email" />
-    <input type="hidden" name="token" value="{{ form_token }}" />
     <div>
-      From Name: <input type="text" name="name" />
+      <input type="hidden" name="action" value="email" />
+      <input type="hidden" name="token" value="{{ form_token }}" />
       <input type="submit" value="Email Invites" />
       (Emails are sent from your email address)
     </div>
