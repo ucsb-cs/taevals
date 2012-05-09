@@ -1,101 +1,32 @@
-import cgi, datetime, logging, math, os, pickle, random, re, tarfile, textwrap
-import time, urllib, StringIO
-
-from google.appengine.dist import use_library
-use_library('django', '1.2')
-
+import StringIO
+import cgi
+import datetime
+import jinja2
+import json
+import logging
+import math
+import os
+import random
+import re
+import tarfile
+import time
+import urllib
+import webapp2
 from google.appengine.api import mail, taskqueue, users
-from google.appengine.ext import db, webapp
-from google.appengine.ext.webapp import template
-from google.appengine.ext.webapp.util import run_wsgi_app
+from google.appengine.ext import db
 from google.appengine.runtime import apiproxy_errors, DeadlineExceededError
+
+import const
+from models import Completed, Eval, EvalInvite, Settings
+
+jinja_environment = jinja2.Environment(loader=jinja2.FileSystemLoader(
+        os.path.join(os.path.dirname(__file__), 'views')))
 
 # catch CapabilityDisabledError on model puts for downtimes
 # Test resource http://pastebin.com/bbidrU7g
 
 VIEW_PATH = os.path.join(os.path.dirname(__file__), 'views')
-CD_ATTACHMENT = 'attachement; filename="%s"'
-
-EVAL_TIME = 120 # in hours
-
-COURSE_RE = re.compile('^[a-zA-Z0-9_]+$')
-TA_NAME_RE = re.compile('^[a-zA-Z -]+$')
-EMAIL_RE = re.compile('^.*@.*$')
-
 MAX_DELETES = 250
-
-EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluations'
-EMAIL_TEMPLATE = """Student,
-
-You are receiving this email because you are currently enrolled in the Computer
-Science Department courses listed below. Your feedback is incredibly important
-as it allows your TA to make the necessary adjustments in order to be of better
-help to you and other students. Please submit an evaluation for the appropriate
-TA(s) in each course you are enrolled in. For TAs with whom you do not
-interact, please select the "Not Applicable" response.
-
-Students who complete 100%% of their evaluations will be automatically entered
-into a raffle for a $25 gift card at Amazon. You will receive an additional
-email stating your entrance into the raffle when you've completed all the
-evaluations.
-
-Please note that the aggregate feedback for each TA will be viewed by that TA,
-in addition to the Lead TA (http://cs.ucsb.edu/~leadta) and the course
-instructor.
-
-It is important to note that this evaluation system was designed to provide you
-with anonymity. The server's database stores the aggregate results for each TA,
-as well as a mapping between emails and outstanding evaluations. Upon form
-submission, your evaluation is automatically aggregated with the other
-evaluations for a particular TA, thus there is no way to associate you to your
-submission. Furthermore, the Lead TA is the only person with access to the
-server's database. The complete source for the evaluation web app is available
-at http://code.google.com/p/taevals/
-
-%s
-
-Thank You,
-%s"""
-
-RESULT_EMAIL_SUBJECT = 'CS Midterm TA Evaluation Results'
-RESULT_EMAIL_TEMPLATE = """%s,
-
-Attached are your individual TA evaluation results, along with the aggregrate
-results across all TAs of the same course this quarter, and the aggregate
-results for all CS department TAs this quarter. The instructor of the course
-has been copied on this email.
-
-If you have any questions please do not hesitate to ask.
-
-Thanks,
-%s"""
-
-COMPLETED_EMAIL_SUBJECT = 'Computer Science Midterm TA Evaluation Raffle'
-COMPLETED_EMAIL_TEMPLATE = """Student,
-
-Thank you for completing all of your midterm TA evaluations. In appreciation of
-your efforts, you have been automatically entered into our raffle for a $25
-Amazon gift card. The winner will be announced through the CS mailing list
-shortly after the evaluation period ends.
-
-Thanks,
-%s"""
-
-QUESTIONS = [
-    ('Please rate your TA\'s knowledge of the course subject matter.', 0),
-    ('Please rate your TA\'s preparation for discussion section.', 0),
-    ('How effective are your TA\'s English communication skills?', 0),
-    ('Please rate the quality of your TA\'s board work.', 0),
-    ('How effective is your TA in answering students\' questions?', 0),
-    ('Please rate the overall effectiveness of your TA.', 0),
-    ('How often do you attend the discussion section / lab?', 1),
-    (''.join(['Please describe at least one specific strength of your TA, ',
-              'discussion section or lab.']), 2),
-    (''.join(['Please suggest at least one specific improvement for your TA, ',
-              'discussion or lab.']), 2)]
-Q_KEY = ['(1) Exceptional  (2) Good  (3) Average  (4) Fair  (5) Poor',
-         '(1) Always  (2) Sometimes  (3) Occasionally  (4) Seldom  (5) Never']
-Q_H = '        weight:  (1)  (2)  (3)  (4)  (5) | Blank  Total  Mean  Median\n'
 
 def nsorted(l):
     convert = lambda text: int(text) if text.isdigit() else text
@@ -109,196 +40,58 @@ def generate_validation_token():
     cookie = "token=%s;expires=%s;path=/" % (form_token, expires_rfc822)
     return form_token, cookie
 
-class Completed(db.Model):
-    email = db.StringProperty(required=True)
 
-class EvalInvite(db.Model):
-    email = db.StringProperty(required=True)
-    email_sent = db.BooleanProperty(default=False)
-    email_from = db.StringProperty()
-    email_from_nick = db.StringProperty()
-    course = db.StringProperty(required=True)
-    tas = db.StringListProperty(required=True)
-    date = db.DateTimeProperty(auto_now_add=True)
-
-    @staticmethod
-    def create_new(student, course, tas):
-        cur = None, None
-        while cur != (student, course):
-            key_name = hex(random.randint(0, 0xFFFFFFFF))[2:]
-            tmp = EvalInvite.get_or_insert(key_name, email=student,
-                                           course=course, tas=tas)
-            cur = tmp.email, tmp.course
-        return tmp
-
-    @property
-    def url(self):
-        return 'https://%s/eval/%s' % (os.environ['HTTP_HOST'],
-                                       self.key().name())
-
-    def __lt__(self, other):
-        return self.course == nsorted((self.course, other.course))[0]
-
-    def remaining_evals(self):
-        query = EvalInvite.all()
-        query.filter('__key__ !=', self.key())
-        query.filter('email', self.email)
-        remaining = []
-        for ei in query:
-            if len(ei.tas):
-                remaining.append(ei)
-        return sorted(remaining)
-
-
-class Eval(db.Model):
-    ta = db.StringProperty(required=True)
-    ta_email = db.StringProperty()
-    prof_email = db.StringProperty()
-    sent_results = db.BooleanProperty()
-    course = db.StringProperty(required=True)
-    responses = db.BlobProperty(required=True)
-
-    def get_responses(self):
-        return pickle.loads(self.responses)
-
-    def update_response_list(self, responses):
-        current = pickle.loads(self.responses)
-
-        for i, (_, q_type) in enumerate(QUESTIONS):
-            response = responses[i].strip()
-            if not response: continue
-
-            if q_type in [0, 1]:
-                current[i][int(response)] += 1
-            else:
-                current[i].append(response)
-        self.responses = pickle.dumps(current, pickle.HIGHEST_PROTOCOL)
-
-    @staticmethod
-    def create_or_update(ta, course, responses):
-        key_name = '%s-%s' % (ta, course)
-        obj = Eval.get_by_key_name(key_name)
-        if not obj:
-            response_list = Eval._construct_response_list()
-            obj = Eval(key_name=key_name, ta=ta, course=course,
-                       responses=response_list)
-        obj.update_response_list(responses)
-        obj.put()
-
-    @staticmethod
-    def formatted_question_stats(values):
-        total = sum(values)
-        tmp = []
-        responded = total - values[0]
-        s = ' ' * 16
-        for i, count in enumerate(values[1:]):
-            if count:
-                s += '%3.0f%% ' % (count * 100. / responded)
-                tmp.extend([i+1 for _ in range(count)])
-            else:
-                s += ' ' * 5
-
-        if responded:
-            mean = '%.1f' % (sum(tmp) * 1. / responded)
-            if len(tmp) % 2 == 0:
-                median = '%.1f' % ((tmp[len(tmp) / 2] +
-                                    tmp[len(tmp) / 2 - 1]) / 2.)
-            else:
-                median = '%.1f' % tmp[len(tmp) / 2]
-        else:
-            mean = median = '-'
-        s += '| %4d   %4d   %4s   %4s\n\n' % (values[0], total, mean, median)
-        return s
-
-    @staticmethod
-    def generate_summary(evals, skip=False):
-        wrapper = textwrap.TextWrapper(width=79)
-        responses = evals[0].get_responses()
-        for eval in evals[1:]:
-            tmp = eval.get_responses()
-            for q_num, (_, q_type) in enumerate(QUESTIONS):
-                if q_type in [0, 1]:
-                    for r_num in range(len(tmp[q_num])):
-                        responses[q_num][r_num] += tmp[q_num][r_num]
-                else:
-                    responses[q_num].extend(tmp[q_num])
-        s = ''
-        for q_num, (question, q_type) in enumerate(QUESTIONS):
-            if skip and q_type == 2:
-                continue
-            wrapper.initial_indent = wrapper.subsequent_indent = ' ' * 8
-            s += '    %2d. %s\n' % (q_num+1, wrapper.fill(question)[8:])
-            wrapper.initial_indent = wrapper.subsequent_indent = ' ' * 11
-            if q_type in [0, 1]:
-                s += '        %s\n' % Q_KEY[q_type]
-                s += Q_H
-                s += Eval.formatted_question_stats(responses[q_num])
-            else:
-                for i, res in enumerate(sorted(responses[q_num])):
-                    tmp = ''
-                    for block in res.split('\n'):
-                        tmp += '%s\n' % wrapper.fill(block)
-                    s += '%5s %3d. %s' % (' ', i+1, tmp[11:])
-                s += '\n'
-        return s
-
-    @staticmethod
-    def _construct_response_list():
-        responses = []
-        for _, q_type in QUESTIONS:
-            if q_type in [0, 1]:
-                responses.append([0, 0, 0, 0, 0, 0])
-            else:
-                responses.append([])
-        return pickle.dumps(responses, pickle.HIGHEST_PROTOCOL)
-
-
-class HomePage(webapp.RequestHandler):
+class HomePage(webapp2.RequestHandler):
     def get(self):
-        path = os.path.join(VIEW_PATH, 'home.html')
-        self.response.out.write(template.render(path, None))
+        template = jinja_environment.get_template('home.html')
+        self.response.out.write(template.render())
 
 
-class EvalPage(webapp.RequestHandler):
+class EvalPage(webapp2.RequestHandler):
     def get(self, key, ta='', responses=None, success=None, errors=None):
-        ei = EvalInvite.get_by_key_name(key)
-        if ei:
-            remaining = ei.remaining_evals()
-            if not remaining and not ei.tas:
-                if not Completed.all().filter('email', ei.email).fetch(1):
-                    body = COMPLETED_EMAIL_TEMPLATE % ei.email_from_nick
+        invite = EvalInvite.get_by_key_name(key)
+        if invite:
+            remaining = invite.remaining_evals()
+            if not remaining and not invite.tas:
+                if not Completed.all().filter('email', invite.email).fetch(1):
+                    body = const.COMPLETED_EMAIL_TEMPLATE.format(
+                        invite.email_from_nick)
                     try:
-                        mail.send_mail(ei.email_from, ei.email,
-                                       COMPLETED_EMAIL_SUBJECT, body)
+                        mail.send_mail(invite.email_from, invite.email,
+                                       const.COMPLETED_EMAIL_SUBJECT, body)
                     except apiproxy_errors.OverQuotaError, message:
                         logging.error(message)
-                    a = Completed(email=ei.email)
+                    a = Completed(email=invite.email)
                     a.put()
 
-            expire_time = ei.date + datetime.timedelta(hours=EVAL_TIME)
-            ei.expired = datetime.datetime.now() > expire_time
+            settings = Settings.get_by_key_name('settings')
+            invite.expired = datetime.datetime.now() > settings.expire_date
 
             if not responses:
-                responses = [''] * len(QUESTIONS)
-            questions = zip(QUESTIONS, responses)
+                responses = [''] * len(const.QUESTIONS)
+            questions = zip(const.QUESTIONS, responses)
 
-            template_values = {'ei':ei, 'success':success, 'errors':errors,
-                               'sel_ta':ta, 'questions':questions,
-                               'remaining':remaining}
-            path = os.path.join(VIEW_PATH, 'eval.html')
-            self.response.out.write(template.render(path, template_values))
+
+            success = success or []
+            errors = errors or []
+
+            values = {'invite':invite, 'success':success, 'errors':errors,
+                      'sel_ta':ta, 'questions':questions, 'remaining':remaining}
+            template = jinja_environment.get_template('eval.html')
+            self.response.out.write(template.render(values))
         else:
             self.redirect('/')
 
     def post(self, key):
-        ei = EvalInvite.get_by_key_name(key)
-        if not ei: return self.redirect('/')
-        expire_time = ei.date + datetime.timedelta(hours=EVAL_TIME)
-        if datetime.datetime.now() > expire_time:
+        invite = EvalInvite.get_by_key_name(key)
+        if not invite: return self.redirect('/')
+
+        settings = Settings.get_by_key_name('settings')
+        if datetime.datetime.now() > settings.expire_date:
             return self.get(key)
 
         ta = self.request.get('ta')
-        if ta not in ei.tas:
+        if ta not in invite.tas:
             return self.get(key, errors=('Must select a TA to evaluate',))
 
         if self.request.get('not_applicable'):
@@ -307,29 +100,28 @@ class EvalPage(webapp.RequestHandler):
             errors = []
             responses = self.get_responses()
 
-            for i in range(len(QUESTIONS)):
+            for i in range(len(const.QUESTIONS)):
                 if i >= len(responses):
                     responses.append('')
                     continue
-                if QUESTIONS[i][1] in [0, 1]:
+                if const.QUESTIONS[i][1] in [0, 1]:
                     if responses[i] not in ['0', '1', '2', '3', '4', '5']:
                         responses[i] = ''
                         errors.append('Must provide an answer for "%s"' %
-                                      QUESTIONS[i][0])
+                                      const.QUESTIONS[i][0])
             if errors:
                 return self.get(key, ta, responses, errors=errors)
 
             try:
-                db.run_in_transaction(Eval.create_or_update, ta, ei.course,
-                                      responses)
+                db.run_in_transaction(Eval.update, invite.course, ta, responses)
             except apiproxy_errors.RequestTooLargeError, message:
                 return self.get(key, ta, responses,
                                 errors=('Your response is too long',))
             success = 'Evaluated: %s' % ta
 
         # Remove TA from list of TAs student can evaluate
-        ei.tas.remove(ta)
-        ei.put()
+        invite.tas.remove(ta)
+        invite.put()
         self.get(key, success=success)
 
     def get_responses(self):
@@ -348,7 +140,7 @@ class EvalPage(webapp.RequestHandler):
         return responses
 
 
-class AdminStatPage(webapp.RequestHandler):
+class AdminStatPage(webapp2.RequestHandler):
     def get(self, course=None, ta=None):
         evals = []
         key_name = None
@@ -376,7 +168,8 @@ class AdminStatPage(webapp.RequestHandler):
         results = Eval.generate_summary(evals, len(evals) > 1)
 
         if self.request.get('dl') == '1':
-            cd = CD_ATTACHMENT % '%s.txt' % title.replace(' ', '_')
+            filename = title.replace(' ', '_')
+            cd = 'attachement; filename="{}.txt"'.format(filename)
             self.response.headers['Content-Type'] = 'text/plain'
             self.response.headers['Content-Disposition'] = cd
             self.response.out.write(results)
@@ -384,23 +177,23 @@ class AdminStatPage(webapp.RequestHandler):
             form_token, cookie = generate_validation_token()
             self.response.headers.add_header("Set-Cookie", cookie)
 
-            path = os.path.join(VIEW_PATH, 'results.html')
-            dl_url = '%s?dl=1' % self.request.url
-            email_url = '%s?email=1' % self.request.url
-            template_values = {'results':cgi.escape(results), 'title':title,
-                               'dl_url':dl_url, 'email_url':email_url,
-                               'form_token':form_token, 'key':key_name}
-            self.response.out.write(template.render(path, template_values))
+            dl_url = '{}?dl=1'.format(self.request.url)
+            email_url = '{}?email=1'.format(self.request.url)
+            values = {'results':cgi.escape(results), 'title':title,
+                      'dl_url':dl_url, 'email_url':email_url,
+                      'form_token':form_token, 'key':key_name}
+            template = jinja_environment.get_template('results.html')
+            self.response.out.write(template.render(values))
 
 
-class ResultDownload(webapp.RequestHandler):
+class ResultDownload(webapp2.RequestHandler):
     def get(self):
         outfile = StringIO.StringIO()
         tgz = tarfile.open(fileobj=outfile, mode='w:gz')
-        
+
         for ev in Eval.all():
-            filename = 'taevals/%s-%s.txt' % (ev.course,
-                                              ev.ta.replace(' ', '_'))
+            filename = 'taevals/{}-{}.txt'.format(ev.course,
+                                                  ev.ta.replace(' ', '_'))
             results = Eval.generate_summary([ev]).encode('utf-8')
             tarinfo = tarfile.TarInfo(filename)
             tarinfo.size = len(results)
@@ -408,30 +201,44 @@ class ResultDownload(webapp.RequestHandler):
             tgz.addfile(tarinfo, StringIO.StringIO(results))
         tgz.close()
 
-        cd = CD_ATTACHMENT % 'taevals.tar.gz'
+        cd = 'attachement; filename="taevals.tar.gz"'
         self.response.headers['Content-Type'] = 'application/x-compressed'
         self.response.headers['Content-Disposition'] = cd
         self.response.out.write(outfile.getvalue())
 
 
-class InitInvitesWorker(webapp.RequestHandler):
+class InitWorker(webapp2.RequestHandler):
     def post(self):
         course = self.request.get('course')
-        students = self.request.get_all('students')
-        tas = self.request.get_all('tas')
+        try:
+            data = json.loads(self.request.get('data'))
+        except ValueError:
+            data = None
+        if not course or not data:
+            return self.response.set_status(202)
 
-        for student in students[:]:
+        # Create Evals
+        if data['instructor']:
+            for ta in data['tas']:
+                Eval.create(course, ta, data['instructor'])
+            data['instructor'] = None
+
+        # Create Invites
+        tas = [ta['name'] for ta in data['tas']]
+        for student in data['students'][:]:
             try:
-                EvalInvite.create_new(student, course, tas)
-            except DeadlineExceededError, message:
-                taskqueue.add(url='/admin/init', params={'course':course,
-                                                         'students':students,
-                                                         'tas':tas})
+                EvalInvite.create(course, student, tas)
+            except DeadlineExceededError:
+                # Need to test this
+                data = json.dumps(data)
+                taskqueue.add(url='/admin/init', params={'course': course,
+                                                         'data': data})
                 return self.response.set_status(200)
-            students.remove(student)
+            data['students'].remove(student)
+        return self.response.set_status(201)
 
 
-class EmailWorker(webapp.RequestHandler):
+class EmailWorker(webapp2.RequestHandler):
     def post(self):
         email_from = self.request.get('from').strip()
         nickname = self.request.get('nickname').strip()
@@ -439,52 +246,47 @@ class EmailWorker(webapp.RequestHandler):
             return self.response.set_status(400)
 
         students = {}
-        for ei in EvalInvite.all():
-            if not ei.tas: continue
-            elif ei.email_sent: continue
+        for invite in EvalInvite.all():
+            if not invite.tas or invite.email_sent:
+                continue
+            students.setdefault(invite.email, []).append(invite)
 
-            if ei.email in students:
-                students[ei.email].append(ei)
-            else:
-                students[ei.email] = [ei]
-
-        for email, eis in students.items():
+        output_tmpl = '-{}\n\tTAs: {}\n\tURL: {}\n'
+        for email, invites in students.items():
             output = ''
-            for ei in sorted(eis):
-                output += '\n'.join(['-%s' % ei.course,
-                                     '\tTAs: %s' % ', '.join(sorted(ei.tas)),
-                                     '\tURL: %s' % ei.url, ''])
+            for invite in sorted(invites):
+                output += output_tmpl.format(invite.course,
+                                             ', '.join(sorted(invite.tas)),
+                                             invite.url)
             try:
-                mail.send_mail(email_from, email, EMAIL_SUBJECT,
-                               EMAIL_TEMPLATE % (output, nickname))
-                # Update invite email_sent field
-                for ei in eis:
-                    ei.email_sent = True
-                    ei.email_from = email_from
-                    ei.email_from_nick = nickname
-                    ei.put()
+                mail.send_mail(email_from, email, const.EMAIL_SUBJECT,
+                               const.EMAIL_TEMPLATE.format(student=invite.name,
+                                                           body=output,
+                                                           sender=nickname))
+                for invite in invites:
+                    invite.email_sent = datetime.datetime.now()
+                    invite.put()
             except apiproxy_errors.OverQuotaError, message:
                 taskqueue.add(url='/admin/email', countdown=60,
-                              params={'from':email_from, 'nickname':nickname})
+                              params={'from': email_from, 'nickname': nickname})
                 return self.response.set_status(200)
+            break
 
 
-class AdminPage(webapp.RequestHandler):
+class AdminPage(webapp2.RequestHandler):
     def get(self, successes=None, warnings=None, errors=None):
         courses = {}
 
         # Remaining Evaluations
-        for ei in EvalInvite.all():
-            if ei.course not in courses:
-                courses[ei.course] = {}
+        for invite in EvalInvite.all():
+            if invite.course not in courses:
+                courses[invite.course] = {}
 
-            for ta in ei.tas:
-                if ta in courses[ei.course]:
-                    courses[ei.course][ta].remaining += 1
+            for ta in invite.tas:
+                if ta in courses[invite.course]:
+                    courses[invite.course][ta].remaining += 1
                 else:
-                    courses[ei.course][ta] = Dummy(remaining=1, completed=0,
-                                                   ta_email=None,
-                                                   prof_email=None,
+                    courses[invite.course][ta] = Dummy(remaining=1, completed=0,
                                                    sent_results=None)
 
         # Completed Evaluations
@@ -492,32 +294,32 @@ class AdminPage(webapp.RequestHandler):
             completed = sum(e.get_responses()[0])
             if e.ta in courses[e.course]:
                 courses[e.course][e.ta].completed = completed
-                courses[e.course][e.ta].ta_email = e.ta_email
-                courses[e.course][e.ta].prof_email = e.prof_email
                 courses[e.course][e.ta].sent_results = e.sent_results
             else:
                 courses[e.course][e.ta] = Dummy(completed=completed,
                                                 remaining=0,
-                                                ta_email=e.ta_email,
-                                                prof_email=e.prof_email,
                                                 sent_results=e.sent_results)
 
         form_token, cookie = generate_validation_token()
         self.response.headers.add_header("Set-Cookie", cookie)
 
-        # Make more user friendly
-        if warnings:
-            warnings = sorted(warnings)
-        if errors:
-            errors = sorted(errors)
+        successes = nsorted(successes) if successes else []
+        warnings = nsorted(warnings) if warnings else []
+        errors = nsorted(errors) if errors else []
         courses = [(x, sorted(courses[x].items())) for x in nsorted(courses)]
 
-        template_values = {'successes':successes, 'warnings':warnings,
-                           'errors':errors, 'courses':courses,
-                           'admin':users.get_current_user(),
-                           'form_token':form_token, 'eval_time':EVAL_TIME}
-        path = os.path.join(VIEW_PATH, 'admin.html')
-        self.response.out.write(template.render(path, template_values))
+        now = datetime.datetime.now()
+        settings = Settings.get_or_insert('settings', expire_date=now)
+        if settings.expire_date < now:
+            remaining_time = str(datetime.timedelta())
+        else:
+            remaining_time = str(settings.expire_date - now)
+
+        values = {'successes':successes, 'warnings':warnings, 'errors':errors,
+                  'courses':courses, 'admin':users.get_current_user(),
+                  'form_token':form_token, 'eval_time':remaining_time}
+        template = jinja_environment.get_template('admin.html')
+        self.response.out.write(template.render(values))
 
     def post(self):
         action = self.request.get('action')
@@ -529,22 +331,20 @@ class AdminPage(webapp.RequestHandler):
 
         if action == 'email':
             self.setup_email_invites()
-        elif action == 'upload':
-            self.upload_csv()
-        elif action == 'reset':
-            self.reset()
-        elif action == 'tamapping':
-            self.update_ta_mappings()
-        elif action == 'professor':
-            self.update_professor_emails()
         elif action == 'email_result':
             self.email_result()
+        elif action == 'expire_date':
+            self.update_expire_date()
+        elif action == 'reset':
+            self.reset()
+        elif action == 'upload':
+            self.upload_json()
         else:
             self.get(errors=['Invalid action: %s' % action])
 
     def form_token_match(self):
-        return 'token' in self.request.cookies and \
-            self.request.cookies['token'] == self.request.get('token')
+        return ('token' in self.request.cookies and
+                self.request.cookies['token'] == self.request.get('token'))
 
     def email_result(self):
         key_name = self.request.get('key')
@@ -552,15 +352,8 @@ class AdminPage(webapp.RequestHandler):
         if not obj:
             return self.get(errors=['Invalid key: "%s"' % key_name])
 
-        errors = []
-        if not obj.ta_email:
-            errors.append('No TA email set')
-        if not obj.prof_email:
-            errors.append('No prof email set')
         if obj.sent_results:
-            errors.append('Results already emailed')
-        if errors:
-            return self.get(errors=errors)
+            return self.get(errors=['Results already emailed.'])
 
         ta_result_name = '%s-%s.txt' % (obj.course, obj.ta.replace(' ', '_'))
         ta_result = Eval.generate_summary([obj])
@@ -573,13 +366,14 @@ class AdminPage(webapp.RequestHandler):
         email_from = '%s <%s>' % (user.nickname(), user.email())
         email_to = '%s <%s>' % (obj.ta, obj.ta_email)
         email_cc = obj.prof_email
-        body = RESULT_EMAIL_TEMPLATE % (obj.ta, user.nickname())
+        body = const.RESULT_EMAIL_TEMPLATE % (obj.ta, user.nickname())
         attachments = [(ta_result_name, ta_result),
                        ('%s.txt' % obj.course, course_result),
                        ('all.txt', all_result)]
 
         try:
-            mail.send_mail(sender=email_from, subject=RESULT_EMAIL_SUBJECT,
+            mail.send_mail(sender=email_from,
+                           subject=const.RESULT_EMAIL_SUBJECT,
                            to=email_to, cc=email_cc, body=body,
                            attachments=attachments)
             obj.sent_results = True
@@ -589,10 +383,10 @@ class AdminPage(webapp.RequestHandler):
             self.get(errors=[str(e)])
 
     def setup_email_invites(self):
-        if self.request.get('name') == '':
-            return self.get(errors=['From name cannot be blank'])
-        else:
-            nickname = self.request.get('name')
+        nickname = self.request.get('name')
+        if not nickname:
+            return self.get(errors=['Form name cannot be blank'])
+
         user = users.get_current_user()
         email_from = '%s <%s>' % (nickname, user.email())
 
@@ -600,69 +394,56 @@ class AdminPage(webapp.RequestHandler):
                                                   'nickname':nickname})
         self.get(['Emails queued'])
 
-    def update_ta_mappings(self):
-        errors = set()
-        body = self.request.get('tas')
-        for line in [x.strip() for x in body.split('\n') if x != '']:
-            name, email = [x.strip() for x in line.split(',') if x != '']
-            if not TA_NAME_RE.match(name):
-                errors.add('Invalid TA name: %s' % name)
-                continue
-            for e in Eval.all().filter('ta =', name):
-                e.ta_email = email
-                e.put()
+    def update_expire_date(self):
+        expire_date = self.request.get('expire_date')
+        try:
+            expire_date = datetime.datetime.strptime(expire_date,
+                                                     '%Y:%m:%d %H:%M')
+        except ValueError:
+            expire_date = None
+        if not expire_date:
+            return self.get(errors=['Invalid expire date'])
+        settings = Settings.get_by_key_name('settings')
+        settings.expire_date = expire_date
+        settings.put()
+        return self.get(['Expire date updated.'])
 
-        self.get(['Updated TA Mappings'], errors=errors)
+    def upload_json(self):
+        course_lists = self.request.get('course_lists')
 
-    def update_professor_emails(self):
-        errors = set()
-        prof_file = self.request.get('professor')
-        mappings = self._process_course_csv(prof_file, errors, 'Prof',
-                                            EMAIL_RE)
-        for course in mappings:
-            for e in Eval.all().filter('course =', course):
-                e.prof_email = mappings[course][0]
-                e.put()
-        self.get(['Updated professor emails'], errors=errors)
-        
-    def upload_csv(self):
-        tas = self.request.get('tas')
-        students = self.request.get('students')
-
-        course_tas = {}
-        course_students = {}
         errors = set()
         warnings = set()
         successes = []
 
-        if tas == '':
-            errors.add('No TA file submitted.')
-        else:
-            course_tas = self._process_csv(tas, errors, 'TA', TA_NAME_RE)
+        try:
+            course_data = json.loads(course_lists)
+        except ValueError:
+            errors.add('Invalid json file.')
+            course_data = {}
 
-        if students == '':
-            errors.add('No student file submitted.')
-        else:
-            course_students = self._process_csv(students, errors, 'student',
-                                                EMAIL_RE)
+        expected_keys = set(('instructor', 'students', 'tas'))
+        person_keys = set(('name', 'email'))
 
-        s_tas = set(course_tas)
-        s_students = set(course_students)
-        courses = s_tas.intersection(s_students)
-
-        for course in s_tas - courses:
-            warnings.add('Skipping course with no students: %s' % course)
-        for course in s_students - courses:
-            warnings.add('Skipping course with no tas: %s' % course)
-
-        if len(errors) == 0:
-            for course in courses:
-                taskqueue.add(url='/admin/init',
-                              params={'course':course,
-                                      'students':course_students[course],
-                                      'tas':course_tas[course]})
-            successes.append('Created invite creation task')
-
+        for course, data in course_data.iteritems():
+            missing = expected_keys - set(data.keys())
+            if missing:
+                warnings.add('{} is missing {!r}.'.format(course,
+                                                          ', '.join(missing)))
+            elif not data['students']:
+                warnings.add('{} has no students.'.format(course))
+            elif not data['tas']:
+                warnings.add('{} has no TAs.'.format(course))
+            elif set(data['instructor'].keys()) != person_keys:
+                warnings.add('{} has an invalid instructor.'.format(course))
+            elif any(set(x.keys()) != person_keys for x in data['students']):
+                warnings.add('{} has an invalid student.'.format(course))
+            elif any(set(x.keys()) != person_keys for x in data['tas']):
+                warnings.add('{} has an invalid TA.'.format(course))
+            else:
+                data = json.dumps(data)
+                taskqueue.add(url='/admin/init', params={'course': course,
+                                                         'data': data})
+                successes.append('Adding course {}'.format(course))
         self.get(successes, warnings, errors)
 
     def reset(self):
@@ -676,40 +457,7 @@ class AdminPage(webapp.RequestHandler):
                 db.delete(keys[i * MAX_DELETES:(i + 1) * MAX_DELETES])
             self.get(successes=['Reset Database'])
 
-    @staticmethod
-    def _process_course_csv(body, errors, descriptor, validator=None):
-        to_return = {}
-        for line in [x.strip() for x in body.split('\n') if x != '']:
-            split = [x.strip() for x in line.split(',') if x != '']
-            if len(split) < 2:
-                errors.add('Invalid TA file beginning at: %s' % line)
-                break
-            course = split[0].lower()
-            names = split[1:]
-            
-            if not COURSE_RE.match(course):
-                errors.add('Invalid course name in %s file: %s' %
-                           (descriptor, course))
-                continue
-
-            if validator:
-                valid = True
-                for name in names:
-                    if not validator.match(name):
-                        errors.add('Invalid %s %s' % (descriptor, name))
-                        valid = False
-                if not valid:
-                    continue
-
-            if course in to_return:
-                errors.add('Duplicate course listing in %s file: %s' %
-                           (descriptor, course))
-            else:
-                to_return[course] = names
-        return to_return
-
-
-class ErrorPage(webapp.RequestHandler):
+class ErrorPage(webapp2.RequestHandler):
     def get(self):
         self.redirect('/', permanent=True)
 
@@ -720,20 +468,13 @@ class Dummy(object):
             self.__dict__[k] = v
 
 
-application = webapp.WSGIApplication([('/', HomePage),
-                                      (r'/eval/([0-9a-f]+)', EvalPage),
-                                      ('/admin', AdminPage),
-                                      ('/admin/all', AdminStatPage),
-                                      ('/admin/dl', ResultDownload),
-                                      ('/admin/email', EmailWorker),
-                                      ('/admin/init', InitInvitesWorker),
-                                      (r'/admin/s/([^/]+)', AdminStatPage),
-                                      (r'/admin/s/([^/]+)/([^/]+)',
-                                       AdminStatPage),
-                                      (r'/.*', ErrorPage)], debug=True)
-
-def main():
-    run_wsgi_app(application)
-
-if __name__ == '__main__':
-    main()
+app = webapp2.WSGIApplication([('/', HomePage),
+                               (r'/eval/([0-9a-f]+)', EvalPage),
+                               ('/admin', AdminPage),
+                               ('/admin/all', AdminStatPage),
+                               ('/admin/dl', ResultDownload),
+                               ('/admin/email', EmailWorker),
+                               ('/admin/init', InitWorker),
+                               (r'/admin/s/([^/]+)', AdminStatPage),
+                               (r'/admin/s/([^/]+)/([^/]+)', AdminStatPage),
+                               (r'/.*', ErrorPage)], debug=True)

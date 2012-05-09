@@ -1,33 +1,35 @@
 application: taevals
-version: 1-1
-runtime: python
+version: 2
+runtime: python27
 api_version: 1
-
-handlers:
-- url: /stats.*
-  script: $PYTHON_LIB/google/appengine/ext/appstats/ui.py
-
-- url: /stylesheets
-  static_dir: stylesheets
-
-- url: /admin.*
-  script: taevals.py
-  login: admin
-  secure: always
-
-- url: /eval/[0-9a-f]+
-  script: taevals.py
-  secure: always
-
-- url: /remote_api
-  script: $PYTHON_LIB/google/appengine/ext/remote_api/handler.py
-  login: admin
-
-- url: /.*
-  script: taevals.py
-  secure: never
+threadsafe: true
 
 admin_console:
   pages:
   - name: TA Evals Admin Page
     url: /admin
+
+builtins:
+#- appstats: on
+#- remote_api: on
+
+handlers:
+- url: /stylesheets
+  static_dir: stylesheets
+
+- url: /admin.*
+  script: taevals.app
+  login: admin
+  secure: always
+
+- url: /eval/[0-9a-f]+
+  script: taevals.app
+  secure: always
+
+- url: /.*
+  script: taevals.app
+  secure: never
+
+libraries:
+- name: jinja2
+  version: 2.6

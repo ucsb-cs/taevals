@@ -1,10 +1,10 @@
 {% extends "layout.html" %}
 
-{% block title %}Midterm TA Evaluations &raquo; {{ ei.course }}{% endblock %}
+{% block title %}Midterm TA Evaluations &raquo; {{ invite.course }}{% endblock %}
 
 {% block content %}
 
-<script>
+<script type="text/javascript">
   function change_dropdown(selection) {
     if (selection != '') {
       document.getElementById('na_checkbox').checked = false;
@@ -35,19 +35,19 @@
   <div class="success">{{ success }}</div>
 {% endif %}
 
-<h1>{{ ei.course }} Midterm TA Evaluation</h1>
+<h1>{{ invite.course }} Midterm TA Evaluation</h1>
 
-{% if ei.expired %}
+{% if invite.expired %}
 <p>The evaluation period has expired.</p>
-{% else %} {% if ei.tas %}
+{% else %} {% if invite.tas %}
 <form action="" method="post">
-  <div id="ta">TA 
+  <div id="ta">TA
     <select onchange="change_dropdown(this.options[this.selectedIndex].value)"
 	    name="ta">
-      <option {% ifequal sel_ta '' %}selected="selected" {% endifequal %}
+      <option {% if sel_ta == '' %}selected="selected" {% endif %}
 	      value="">Select ...</option>
-      {% for ta in ei.tas %}
-      <option {% ifequal sel_ta ta %}selected="selected" {% endifequal %}
+      {% for ta in invite.tas %}
+      <option {% if sel_ta == ta %}selected="selected" {% endif %}
 	      value="{{ ta }}">{{ ta }}</option>
       {% endfor %}
     </select>
@@ -61,79 +61,79 @@
   <div id="evaluation">
     {% for ques in questions %}
     <div class="question-wrapper">
-      <div class="question">{{ forloop.counter }}) {{ ques.0.0 }}</div>
-      {% ifequal ques.0.1 0 %}
+      <div class="question">{{ loop.index }}) {{ ques.0.0 }}</div>
+      {% if ques.0.1 == 0 %}
       <div class="choices">
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="1"
-		 {% ifequal ques.1 '1' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="1"
+		 {% if ques.1 == '1' %}checked="checked"{% endif %} />
 	  Exceptional
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="2"
-		 {% ifequal ques.1 '2' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="2"
+		 {% if ques.1 == '2' %}checked="checked"{% endif %} />
 	  Good
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="3"
-		 {% ifequal ques.1 '3' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="3"
+		 {% if ques.1 == '3' %}checked="checked"{% endif %} />
 	  Average
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="4"
-		 {% ifequal ques.1 '4' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="4"
+		 {% if ques.1 == '4' %}checked="checked"{% endif %} />
 	    Fair
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="5"
-		 {% ifequal ques.1 '5' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="5"
+		 {% if ques.1 == '5' %}checked="checked"{% endif %} />
 	  Poor
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="0"
-		 {% ifequal ques.1 '0' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="0"
+		 {% if ques.1 == '0' %}checked="checked"{% endif %} />
 	  Decline to Respond
 	</label>
       </div>
-      {% else %}{% ifequal ques.0.1 1 %}
+      {% else %}{% if ques.0.1 == 1 %}
       <div class="choices">
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="1"
-		 {% ifequal ques.1 '1' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="1"
+		 {% if ques.1 == '1' %}checked="checked"{% endif %} />
 	  Always
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="2"
-		 {% ifequal ques.1 '2' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="2"
+		 {% if ques.1 == '2' %}checked="checked"{% endif %} />
 	  Sometimes
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="3"
-		 {% ifequal ques.1 '3' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="3"
+		 {% if ques.1 == '3' %}checked="checked"{% endif %} />
 	  Occasionally
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="4"
-		 {% ifequal ques.1 '4' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="4"
+		 {% if ques.1 == '4' %}checked="checked"{% endif %} />
 	  Seldom
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="5"
-		 {% ifequal ques.1 '5' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="5"
+		 {% if ques.1 == '5' %}checked="checked"{% endif %} />
 	  Never
 	</label>
 	<label>
-	  <input type="radio" name="resp{{ forloop.counter }}" value="0"
-		 {% ifequal ques.1 '0' %}checked="checked"{% endifequal %} />
+	  <input type="radio" name="resp{{ loop.index }}" value="0"
+		 {% if ques.1 == '0' %}checked="checked"{% endif %} />
 	  Decline to Respond
 	</label>
       </div>
-      {% else %}{% ifequal ques.0.1 2 %}
-      <textarea name="resp{{ forloop.counter }}" rows="5"
+      {% else %}{% if ques.0.1 == 2 %}
+      <textarea name="resp{{ loop.index }}" rows="5"
 		cols="108">{{ ques.1 }}</textarea>
       {% else %}
       Unsupported Question Type
-      {% endifequal %}{% endifequal %}{% endifequal %}
+      {% endif %}{% endif %}{% endif %}
     </div>
     {% endfor %}
     <h4 class="error">Warning: Your submission is final. It cannot be
@@ -143,18 +143,18 @@
   <div id="submit"><input type="submit" value="Submit Evaluation" /></div>
 </form>
 
-{% ifequal sel_ta '' %}
-<script>
+{% if sel_ta == '' %}
+<script type="text/javascript">
   change_dropdown('')
 </script>
-{% endifequal %}
+{% endif %}
 {% else %}
 {% if remaining %}
 <p>There are no more TAs to evaluate for this class, however, you still have
 these other evaluations to complete:</p>
 <ul>
-  {% for ei in remaining %}
-  <li><a href="{{ ei.url }}">{{ ei.course }}</a> ({{ ei.tas|length }})</li>
+  {% for invite in remaining %}
+  <li><a href="{{ invite.url }}">{{ invite.course }}</a> ({{ invite.tas|length }})</li>
   {% endfor %}
 </ul>
 {% else %}
