@@ -456,7 +456,7 @@ class InitWorker(webapp2.RequestHandler):
 
 
 app = webapp2.WSGIApplication([('/', HomePage),
-                               (r'/eval/([0-9a-f]+)', EvalPage),
+                               (r'/eval/(\w+)', EvalPage),
                                ('/admin', AdminPage),
                                ('/admin/all', AdminStatPage),
                                ('/admin/dl', ResultDownload),
