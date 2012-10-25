@@ -19,14 +19,14 @@ def generate_validation_token():
     return form_token, cookie
 
 
-def invite_iterator():
+def invite_iterator(limit=100):
     students = {}
     for invite in models.EvalInvite.all():
         if invite.tas and not invite.email_sent:
             students.setdefault(invite.email, []).append(invite)
 
     output_tmpl = '-{}\n\tTAs: {}\n\tURL: {}'
-    for invites in students.itervalues():
+    for invites in students.values()[:limit]:
         output = []
         for invite in sorted(invites):
             tas = ', '.join(sorted(invite.tas))

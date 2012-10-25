@@ -106,10 +106,10 @@ class AdminPage(webapp2.RequestHandler):
         else:
             self.get(errors=['Invalid action: {}'.format(action)])
 
-    def download_email_json(self):
+    def download_email_json(self, limit=100):
         data = {'template': const.EMAIL_TEMPLATE, 'emails': []}
         now = datetime.datetime.now()
-        for invites, output in helpers.invite_iterator():
+        for invites, output in helpers.invite_iterator(limit=100):
             name = invites[0].name
             email = '{} <{}>'.format(name, invites[0].email)
             cur = {'name': invites[0].name, 'email': email, 'output': output}
